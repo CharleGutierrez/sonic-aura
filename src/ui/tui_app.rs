@@ -1,7 +1,8 @@
 //! Interactive Terminal User Interface (TUI) Dashboard
 
 use crate::config::AppConfig;
-use crate::dsp::pipeline::SharedPipeline;
+use crate::dsp::ai_analyzer::{AudioFeatures, AiAdaptiveParameters, NUM_SPECTRUM_BINS};
+use crate::dsp::pipeline::{PipelineConfig, SharedPipeline};
 use crate::dsp::spatializer::SpatialMode;
 use crate::presets::PresetManager;
 use crate::ui::spectrum::{SpectrumVisualizer, VuMeter};
@@ -22,6 +23,15 @@ pub enum ActivePanel {
     Presets,
     Equalizer,
     Enhancers,
+}
+
+#[derive(Clone)]
+struct UiSnapshot {
+    visualizer_bins: [f32; NUM_SPECTRUM_BINS],
+    features: AudioFeatures,
+    adaptive_params: AiAdaptiveParameters,
+    eq_gains: [f32; 10],
+    config: PipelineConfig,
 }
 
 pub struct TuiApp {
@@ -74,7 +84,10 @@ impl TuiApp {
         let mut last_tick = Instant::now();
 
         loop {
-            terminal.draw(|f| self.render_ui(f))?;
+            // Snapshot UI data with a sub-microsecond lock
+            let snapshot = self.take_ui_snapshot();
+
+            terminal.draw(|f| self.render_ui(f, &snapshot))?;
 
             let timeout = tick_rate.saturating_sub(last_tick.elapsed());
             if event::poll(timeout)? {
@@ -97,6 +110,21 @@ impl TuiApp {
         terminal.show_cursor()?;
 
         Ok(())
+    }
+
+    fn take_ui_snapshot(&self) -> UiSnapshot {
+        let pl = self.pipeline.lock().unwrap();
+        let mut eq_gains = [0.0; 10];
+        for i in 0..10 {
+            eq_gains[i] = pl.eq.get_band_gain(i);
+        }
+        UiSnapshot {
+            visualizer_bins: pl.ai_analyzer.visualizer_bins,
+            features: pl.ai_analyzer.features.clone(),
+            adaptive_params: pl.ai_analyzer.adaptive_params.clone(),
+            eq_gains,
+            config: pl.config.clone(),
+        }
     }
 
     fn set_status(&mut self, msg: &str) {
@@ -289,7 +317,7 @@ impl TuiApp {
         }
     }
 
-    fn render_ui(&self, f: &mut ratatui::Frame) {
+    fn render_ui(&self, f: &mut ratatui::Frame, snap: &UiSnapshot) {
         let size = f.area();
 
         // Main layout: Header, Body (Top & Bottom), Status Footer
@@ -302,29 +330,19 @@ impl TuiApp {
             ])
             .split(size);
 
-        self.render_header(f, main_chunks[0]);
-        self.render_body(f, main_chunks[1]);
+        self.render_header(f, main_chunks[0], snap);
+        self.render_body(f, main_chunks[1], snap);
         self.render_footer(f, main_chunks[2]);
     }
 
-    fn render_header(&self, f: &mut ratatui::Frame, area: Rect) {
-        let (pl_enabled, mode_name, ai_on) = {
-            let pl = self.pipeline.lock().unwrap();
-            let mode_str = match pl.config.spatial_mode {
-                SpatialMode::HeadphonesBinaural => "🎧 Headphones 3D Atmos",
-                SpatialMode::LaptopSpeakers => "💻 Laptop Speaker Lens",
-                SpatialMode::StudioNearfield => "🎛️ Studio Reference",
-            };
-            (pl.config.enabled, mode_str, pl.config.ai_boost_enabled)
-        };
-
-        let status_badge = if pl_enabled {
+    fn render_header(&self, f: &mut ratatui::Frame, area: Rect, snap: &UiSnapshot) {
+        let status_badge = if snap.config.enabled {
             Span::styled(" ● ACTIVE ", Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
         } else {
             Span::styled(" ○ BYPASS ", Style::default().fg(Color::White).bg(Color::DarkGray))
         };
 
-        let ai_badge = if ai_on {
+        let ai_badge = if snap.config.ai_boost_enabled {
             Span::styled(" [AI BOOST: ON] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
         } else {
             Span::styled(" [AI BOOST: OFF] ", Style::default().fg(Color::DarkGray))
@@ -333,7 +351,7 @@ impl TuiApp {
         let header_text = Line::from(vec![
             Span::styled(" ⚡ SONIC AURA AI ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
             Span::styled("│ Dolby & B&O Psychoacoustic DSP Engine │ ", Style::default().fg(Color::Gray)),
-            Span::styled(format!("{} │ ", mode_name), Style::default().fg(Color::Magenta)),
+            Span::styled(format!("{} │ ", mode_name(snap.config.spatial_mode)), Style::default().fg(Color::Magenta)),
             ai_badge,
             Span::raw(" "),
             status_badge,
@@ -345,7 +363,7 @@ impl TuiApp {
         f.render_widget(header_widget, area);
     }
 
-    fn render_body(&self, f: &mut ratatui::Frame, area: Rect) {
+    fn render_body(&self, f: &mut ratatui::Frame, area: Rect, snap: &UiSnapshot) {
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -363,8 +381,8 @@ impl TuiApp {
             ])
             .split(rows[0]);
 
-        self.render_visualizer(f, top_cols[0]);
-        self.render_ai_telemetry(f, top_cols[1]);
+        self.render_visualizer(f, top_cols[0], snap);
+        self.render_ai_telemetry(f, top_cols[1], snap);
 
         // Bottom Split: Presets & EQ (52%) + DSP Controls (48%)
         let bot_cols = Layout::default()
@@ -375,20 +393,11 @@ impl TuiApp {
             ])
             .split(rows[1]);
 
-        self.render_eq_panel(f, bot_cols[0]);
-        self.render_enhancers_panel(f, bot_cols[1]);
+        self.render_eq_panel(f, bot_cols[0], snap);
+        self.render_enhancers_panel(f, bot_cols[1], snap);
     }
 
-    fn render_visualizer(&self, f: &mut ratatui::Frame, area: Rect) {
-        let (bins, peak_db, rms_db) = {
-            let pl = self.pipeline.lock().unwrap();
-            (
-                pl.ai_analyzer.visualizer_bins,
-                pl.ai_analyzer.features.peak_db,
-                pl.ai_analyzer.features.rms_db,
-            )
-        };
-
+    fn render_visualizer(&self, f: &mut ratatui::Frame, area: Rect, snap: &UiSnapshot) {
         let block = Block::default()
             .title(" 📊 Real-Time 32-Band FFT Spectrum & Dynamics ")
             .borders(Borders::ALL)
@@ -407,24 +416,22 @@ impl TuiApp {
             .split(inner);
 
         // Render FFT bars
-        let spec_widget = SpectrumVisualizer::new(&bins, "");
+        let spec_widget = SpectrumVisualizer::new(&snap.visualizer_bins, "");
         f.render_widget(spec_widget, split[0]);
 
         // Render VU meter
         let vu = VuMeter {
-            peak_db_l: peak_db,
-            peak_db_r: peak_db * 0.95,
-            _rms_db_l: rms_db,
-            _rms_db_r: rms_db * 0.95,
+            peak_db_l: snap.features.peak_db,
+            peak_db_r: snap.features.peak_db * 0.95,
+            _rms_db_l: snap.features.rms_db,
+            _rms_db_r: snap.features.rms_db * 0.95,
         };
         vu.render_meter(split[1], f.buffer_mut());
     }
 
-    fn render_ai_telemetry(&self, f: &mut ratatui::Frame, area: Rect) {
-        let (feat, adapt) = {
-            let pl = self.pipeline.lock().unwrap();
-            (pl.ai_analyzer.features.clone(), pl.ai_analyzer.adaptive_params.clone())
-        };
+    fn render_ai_telemetry(&self, f: &mut ratatui::Frame, area: Rect, snap: &UiSnapshot) {
+        let feat = &snap.features;
+        let adapt = &snap.adaptive_params;
 
         let block = Block::default()
             .title(" 🧠 AI Psychoacoustic Telemetry ")
@@ -463,7 +470,7 @@ impl TuiApp {
         f.render_widget(p, area);
     }
 
-    fn render_eq_panel(&self, f: &mut ratatui::Frame, area: Rect) {
+    fn render_eq_panel(&self, f: &mut ratatui::Frame, area: Rect, snap: &UiSnapshot) {
         let is_focused = self.active_panel == ActivePanel::Equalizer;
         let border_color = if is_focused { Color::Yellow } else { Color::DarkGray };
 
@@ -477,17 +484,12 @@ impl TuiApp {
         f.render_widget(block, area);
 
         let freqs = ["31", "63", "125", "250", "500", "1k", "2k", "4k", "8k", "16k"];
-        let gains: Vec<f32> = {
-            let pl = self.pipeline.lock().unwrap();
-            (0..10).map(|i| pl.eq.get_band_gain(i)).collect()
-        };
-
         let band_width = (inner.width as usize / 10).max(1);
         let center_y = inner.top() + (inner.height / 2);
 
         for (i, &freq) in freqs.iter().enumerate() {
             let x = inner.left() + (i * band_width) as u16 + (band_width as u16 / 2);
-            let gain = gains[i];
+            let gain = snap.eq_gains[i];
             let is_sel = is_focused && self.selected_eq_band == i;
 
             // Draw Frequency label
@@ -522,7 +524,7 @@ impl TuiApp {
         }
     }
 
-    fn render_enhancers_panel(&self, f: &mut ratatui::Frame, area: Rect) {
+    fn render_enhancers_panel(&self, f: &mut ratatui::Frame, area: Rect, snap: &UiSnapshot) {
         let is_focused = self.active_panel == ActivePanel::Enhancers;
         let border_color = if is_focused { Color::Yellow } else { Color::DarkGray };
 
@@ -535,10 +537,7 @@ impl TuiApp {
         let inner = block.inner(area);
         f.render_widget(block, area);
 
-        let cfg = {
-            let pl = self.pipeline.lock().unwrap();
-            pl.config.clone()
-        };
+        let cfg = &snap.config;
 
         let items = [
             ("AI Adaptive Boost", format!("{:.0}%", cfg.ai_intensity * 100.0), (cfg.ai_intensity / 1.5).clamp(0.0, 1.0)),
@@ -626,5 +625,13 @@ impl TuiApp {
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(Color::Cyan)));
 
         f.render_widget(footer_widget, area);
+    }
+}
+
+fn mode_name(mode: SpatialMode) -> &'static str {
+    match mode {
+        SpatialMode::HeadphonesBinaural => "🎧 Headphones 3D Atmos",
+        SpatialMode::LaptopSpeakers => "💻 Laptop Speaker Lens",
+        SpatialMode::StudioNearfield => "🎛️ Studio Reference",
     }
 }

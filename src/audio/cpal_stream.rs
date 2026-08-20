@@ -5,10 +5,37 @@ use crate::dsp::pipeline::SharedPipeline;
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Host, Stream, StreamConfig};
-use ringbuf::traits::{Consumer, Producer, Split};
+use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::HeapRb;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+
+#[cfg(target_os = "linux")]
+fn silence_alsa_logging() {
+    unsafe {
+        extern "C" fn dummy_handler(
+            _file: *const std::ffi::c_char,
+            _line: std::ffi::c_int,
+            _function: *const std::ffi::c_char,
+            _err: std::ffi::c_int,
+            _fmt: *const std::ffi::c_char,
+        ) {
+            // Intentionally suppress ALSA XRUN/underrun recovery notices from printing to stderr
+        }
+
+        let handle = libc::dlopen(b"libasound.so.2\0".as_ptr() as *const _, libc::RTLD_LAZY);
+        if !handle.is_null() {
+            let symbol = libc::dlsym(handle, b"snd_lib_error_set_handler\0".as_ptr() as *const _);
+            if !symbol.is_null() {
+                let set_handler: extern "C" fn(*const ()) -> std::ffi::c_int = std::mem::transmute(symbol);
+                set_handler(dummy_handler as *const ());
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn silence_alsa_logging() {}
 
 pub struct AudioEngine {
     _host: Host,
@@ -47,6 +74,9 @@ impl AudioEngine {
         preferred_output: Option<String>,
         synth_tone: SynthTone,
     ) -> Result<Self> {
+        // Silence ALSA C-library underrun stderr warnings so terminal TUI remains pristine
+        silence_alsa_logging();
+
         let host = cpal::default_host();
 
         // 1. Select Output Device
@@ -74,10 +104,11 @@ impl AudioEngine {
 
         let is_running = Arc::new(AtomicBool::new(true));
 
+        // Use 512 frame buffer size (10.6ms at 48kHz) or default
         let out_config = StreamConfig {
             channels: default_out_config.channels(),
             sample_rate,
-            buffer_size: cpal::BufferSize::Default,
+            buffer_size: cpal::BufferSize::Fixed(512),
         };
 
         let mut _input_stream_opt: Option<Stream> = None;
@@ -90,12 +121,12 @@ impl AudioEngine {
                 synth.set_tone_type(synth_tone);
 
                 let pl_clone = Arc::clone(&pipeline);
-                let err_fn = |err| eprintln!("Output audio stream error: {}", err);
+                let err_fn = |_| {};
 
                 let output_stream = output_device.build_output_stream(
                     &out_config,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        if let Ok(mut pl) = pl_clone.try_lock() {
+                        if let Ok(mut pl) = pl_clone.lock() {
                             for frame in data.chunks_exact_mut(out_channels) {
                                 let (syn_l, syn_r) = synth.next_sample();
                                 let (out_l, out_r) = pl.process_stereo_sample(syn_l, syn_r);
@@ -146,15 +177,15 @@ impl AudioEngine {
                 let in_config = StreamConfig {
                     channels: default_in_config.channels(),
                     sample_rate,
-                    buffer_size: cpal::BufferSize::Default,
+                    buffer_size: cpal::BufferSize::Fixed(512),
                 };
 
-                // Ring buffer for bridging input stream to output stream (stereo samples)
-                let ring_buffer = HeapRb::<f32>::new(8192);
+                // Ring buffer for bridging input stream to output stream (stereo samples: 16,384 capacity)
+                let ring_buffer = HeapRb::<f32>::new(16384);
                 let (mut producer, mut consumer) = ring_buffer.split();
 
-                let err_fn_in = |err| eprintln!("Input audio stream error: {}", err);
-                let err_fn_out = |err| eprintln!("Output audio stream error: {}", err);
+                let err_fn_in = |_| {};
+                let err_fn_out = |_| {};
 
                 // Input capture callback
                 let input_stream = input_device.build_input_stream(
@@ -171,12 +202,32 @@ impl AudioEngine {
                     None,
                 )?;
 
-                // Output playback callback with DSP processing
+                // Output playback callback with DSP processing & pre-buffering
                 let pl_clone = Arc::clone(&pipeline);
+                let mut prebuffer_ready = false;
+                let prebuffer_threshold = 512; // 256 stereo frames
+
                 let output_stream = output_device.build_output_stream(
                     &out_config,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        if let Ok(mut pl) = pl_clone.try_lock() {
+                        // Check if jitter buffer has warmed up
+                        if !prebuffer_ready {
+                            if consumer.occupied_len() >= prebuffer_threshold {
+                                prebuffer_ready = true;
+                            } else {
+                                data.fill(0.0);
+                                return;
+                            }
+                        }
+
+                        // Drift protection: if buffer is overfilled (>12000 samples), skip a few frames to keep latency crisp
+                        if consumer.occupied_len() > 12000 {
+                            for _ in 0..128 {
+                                let _ = consumer.try_pop();
+                            }
+                        }
+
+                        if let Ok(mut pl) = pl_clone.lock() {
                             for frame in data.chunks_exact_mut(out_channels) {
                                 let in_l = consumer.try_pop().unwrap_or(0.0);
                                 let in_r = consumer.try_pop().unwrap_or(0.0);
