@@ -1,7 +1,6 @@
-//! Real-Time Low-Latency CPAL Audio I/O Engine with Automatic System Audio Routing
+//! Real-Time Low-Latency CPAL Audio Playback & Synthesis Engine
 
 use crate::audio::test_synth::{SynthTone, TestSynth};
-use crate::audio::virtual_device::VirtualSinkManager;
 use crate::dsp::pipeline::SharedPipeline;
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -43,16 +42,14 @@ pub struct AudioEngine {
     pub sample_rate: u32,
     pub is_running: Arc<AtomicBool>,
     pub synth_enabled: Arc<AtomicBool>,
-    pub original_sink: Option<String>,
-    pub original_source: Option<String>,
     _input_stream: Option<Stream>,
     _output_stream: Option<Stream>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EngineMode {
-    LoopbackLive, // Process live input/sink monitor -> DSP -> output
-    TestSynth,    // Internal test synth -> DSP -> output
+    LoopbackLive,
+    TestSynth,
 }
 
 impl AudioEngine {
@@ -76,43 +73,26 @@ impl AudioEngine {
         preferred_output: Option<String>,
         synth_tone: SynthTone,
     ) -> Result<Self> {
-        // Silence ALSA C-library underrun stderr warnings so terminal TUI remains pristine
         silence_alsa_logging();
-
-        // Automatically setup PipeWire/PulseAudio virtual sink routing for YouTube / system sound
-        let (original_sink, original_source) = if mode == EngineMode::LoopbackLive {
-            VirtualSinkManager::auto_route_system_audio()
-        } else {
-            (None, None)
-        };
 
         let host = cpal::default_host();
 
-        // 1. Select Physical Output Device (avoid SonicAura_Sink to prevent feedback)
+        // 1. Select Physical Output Device
         let output_device = if let Some(ref name) = preferred_output {
             host.output_devices()?
                 .find(|d| d.name().map(|n| n == *name).unwrap_or(false))
                 .or_else(|| host.default_output_device())
         } else {
-            // Find a hardware output device that is not SonicAura_Sink
-            host.output_devices()?
-                .find(|d| {
-                    d.name()
-                        .map(|n| !n.contains("SonicAura") && (n.contains("analog") || n.contains("default") || n.contains("sysdefault") || n.contains("front")))
-                        .unwrap_or(false)
-                })
-                .or_else(|| host.default_output_device())
+            host.default_output_device()
         }
         .context("No audio output device found on system")?;
 
         let output_device_name = output_device.name().unwrap_or_else(|_| "Default Output".to_string());
 
-        // Select Output Config
         let default_out_config = output_device.default_output_config()?;
         let sample_rate = default_out_config.sample_rate();
         let out_channels = default_out_config.channels() as usize;
 
-        // Update pipeline sample rate
         {
             let mut pl = pipeline.lock().unwrap();
             pl.set_sample_rate(sample_rate as f32);
@@ -121,39 +101,28 @@ impl AudioEngine {
         let is_running = Arc::new(AtomicBool::new(true));
         let synth_enabled = Arc::new(AtomicBool::new(mode == EngineMode::TestSynth));
 
-        // Use 512 frame buffer size (10.6ms at 48kHz)
         let out_config = StreamConfig {
             channels: default_out_config.channels(),
             sample_rate,
             buffer_size: cpal::BufferSize::Fixed(512),
         };
 
-        // Ring buffer for bridging input stream to output stream (stereo samples: 16,384 capacity)
         let ring_buffer = HeapRb::<f32>::new(16384);
         let (mut producer, mut consumer) = ring_buffer.split();
 
-        // Initialize Internal Synth
         let mut synth = TestSynth::new(sample_rate as f32);
         synth.set_tone_type(synth_tone);
 
-        // Try setting up input stream
         let mut _input_stream_opt: Option<Stream> = None;
         let mut input_device_name = "None".to_string();
 
-        let input_device_res = if let Some(ref name) = preferred_input {
-            host.input_devices()
-                .ok()
-                .and_then(|mut devs| devs.find(|d| d.name().map(|n| n == *name).unwrap_or(false)))
+        if let Some(input_device) = if let Some(ref name) = preferred_input {
+            host.input_devices()?
+                .find(|d| d.name().map(|n| n == *name).unwrap_or(false))
                 .or_else(|| host.default_input_device())
         } else {
-            // Prefer SonicAura_Sink.monitor or system monitor source
-            host.input_devices()
-                .ok()
-                .and_then(|mut devs| devs.find(|d| d.name().map(|n| n.contains("SonicAura") || n.contains("monitor")).unwrap_or(false)))
-                .or_else(|| host.default_input_device())
-        };
-
-        if let Some(input_device) = input_device_res {
+            host.default_input_device()
+        } {
             input_device_name = input_device.name().unwrap_or_else(|_| "Default Input".to_string());
             if let Ok(default_in_config) = input_device.default_input_config() {
                 let in_channels = default_in_config.channels() as usize;
@@ -183,11 +152,8 @@ impl AudioEngine {
             }
         }
 
-        // Output playback callback with DSP processing & pre-buffering
         let pl_clone = Arc::clone(&pipeline);
         let synth_flag = Arc::clone(&synth_enabled);
-        let mut prebuffer_ready = false;
-        let prebuffer_threshold = 512;
 
         let err_fn_out = |_| {};
         let output_stream = output_device.build_output_stream(
@@ -196,7 +162,6 @@ impl AudioEngine {
                 let is_synth = synth_flag.load(Ordering::Relaxed);
 
                 if is_synth {
-                    // Play synthesized spatial test audio through DSP pipeline
                     if let Ok(mut pl) = pl_clone.lock() {
                         for frame in data.chunks_exact_mut(out_channels) {
                             let (syn_l, syn_r) = synth.next_sample();
@@ -213,36 +178,28 @@ impl AudioEngine {
                         data.fill(0.0);
                     }
                 } else {
-                    // Play live YouTube / system loopback audio through DSP pipeline
-                    if !prebuffer_ready {
-                        if consumer.occupied_len() >= prebuffer_threshold {
-                            prebuffer_ready = true;
+                    // Check if consumer has audio from input/loopback stream
+                    if consumer.occupied_len() >= 2 {
+                        if let Ok(mut pl) = pl_clone.lock() {
+                            for frame in data.chunks_exact_mut(out_channels) {
+                                if let (Some(in_l), Some(in_r)) = (consumer.try_pop(), consumer.try_pop()) {
+                                    let (out_l, out_r) = pl.process_stereo_sample(in_l, in_r);
+                                    frame[0] = out_l;
+                                    if frame.len() > 1 {
+                                        frame[1] = out_r;
+                                    }
+                                    for extra in frame.iter_mut().skip(2) {
+                                        *extra = 0.0;
+                                    }
+                                } else {
+                                    frame.fill(0.0);
+                                }
+                            }
                         } else {
                             data.fill(0.0);
-                            return;
-                        }
-                    }
-
-                    if consumer.occupied_len() > 12000 {
-                        for _ in 0..128 {
-                            let _ = consumer.try_pop();
-                        }
-                    }
-
-                    if let Ok(mut pl) = pl_clone.lock() {
-                        for frame in data.chunks_exact_mut(out_channels) {
-                            let in_l = consumer.try_pop().unwrap_or(0.0);
-                            let in_r = consumer.try_pop().unwrap_or(0.0);
-                            let (out_l, out_r) = pl.process_stereo_sample(in_l, in_r);
-                            frame[0] = out_l;
-                            if frame.len() > 1 {
-                                frame[1] = out_r;
-                            }
-                            for extra in frame.iter_mut().skip(2) {
-                                *extra = 0.0;
-                            }
                         }
                     } else {
+                        // Consumer is empty: do not overwrite pipeline ai_analyzer with zeros!
                         data.fill(0.0);
                     }
                 }
@@ -260,19 +217,8 @@ impl AudioEngine {
             sample_rate,
             is_running,
             synth_enabled,
-            original_sink,
-            original_source,
             _input_stream: _input_stream_opt,
             _output_stream: Some(output_stream),
         })
-    }
-}
-
-impl Drop for AudioEngine {
-    fn drop(&mut self) {
-        VirtualSinkManager::cleanup_and_restore(
-            self.original_sink.as_deref(),
-            self.original_source.as_deref(),
-        );
     }
 }

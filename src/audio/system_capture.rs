@@ -242,7 +242,7 @@ impl SystemSoundCapture {
                 }
             }
 
-            // 4. Feed audio data into pipeline if available
+            // 4. Feed audio data into pipeline to process DSP and update 32-Band FFT spectrum
             if read_bytes > 0 {
                 let num_samples = read_bytes / 2;
                 let num_frames = num_samples / 2;
@@ -253,7 +253,7 @@ impl SystemSoundCapture {
                         let s_l = i16::from_le_bytes([raw_buf[offset], raw_buf[offset + 1]]) as f32 / 32768.0;
                         let s_r = i16::from_le_bytes([raw_buf[offset + 2], raw_buf[offset + 3]]) as f32 / 32768.0;
 
-                        pl.ai_analyzer.push_sample(s_l, s_r);
+                        let _ = pl.process_stereo_sample(s_l, s_r);
                     }
                 }
             }
