@@ -1,9 +1,9 @@
 # ⚡ SonicAura AI: Universal Audio Enhancer in Rust
-### Dolby Atmos & Bang & Olufsen-Grade Sound • Adapts to ANY Earphones • Adapts to ANY Environment (City to Remote)
+### Dolby Atm*s & B*ng & Olufsen-Grade Sound • Adapts to ANY Earphones • Adapts to ANY Environment (City to Remote)
 
 A lightweight, ultra-low latency, psychoacoustic AI sound enhancement engine written in pure **Rust**.
 
-Transforms laptop speakers, external soundbars, cheap earbuds, Apple AirPods, high-end IEMs, and studio headphones into an immersive, crisp, and high-fidelity acoustic experience inspired by **Dolby Atmos**, **Bang & Olufsen BeoPlay**, and **Apple Spatial Audio**.
+Transforms laptop speakers, external soundbars, cheap earbuds, Apple AirPods, high-end IEMs, and studio headphones into an immersive, crisp, and high-fidelity acoustic experience inspired by **Dolby Atm*s**, **B*ng & Olufsen BeoPlay**, and **Apple Spatial Audio**.
 
 ---
 
@@ -14,7 +14,7 @@ SonicAura AI auto-calibrates to overcome the physical driver limitations of any 
 | Earphone Profile | Target Hardware | Acoustic Calibration & DSP Fixes |
 |---|---|---|
 | **Budget Earbuds Fix** | Cheap $5–$20 earbuds, airline earphones | Injects psychoacoustic missing fundamental sub-bass (+1.5x), notches out 3.2kHz harsh plastic resonance, eliminates 250Hz boxy mud, and synthesizes missing >10kHz air sheen. |
-| **Apple AirPods / TWS** | AirPods 1/2/3/Pro/Max, Galaxy Buds, Sony TWS | Harman In-Ear Target Curve calibration, wide 3D Atmos soundstage, open-fit low-end compensation, and crystalline vocal presence. |
+| **Apple AirPods / TWS** | AirPods 1/2/3/Pro/Max, Galaxy Buds, Sony TWS | Harman In-Ear Target Curve calibration, wide 3D Atm*s soundstage, open-fit low-end compensation, and crystalline vocal presence. |
 | **Bass-Heavy Buds** | Beats, Skullcandy, Sony Extra Bass | De-bloats muddy 150–300Hz mid-bass hum, lifts buried vocal formants (+3.5dB @ 2.8kHz), and sharpens drum/percussion transient snap. |
 | **Audiophile IEMs** | Moondrop, Chi-Fi planar, Sennheiser IE, Shure | Harman 2019 Reference curve tuning with Meier HRTF binaural crossfeed (pulls audio out of the head onto virtual mastering studio monitors) and 6.5kHz sibilance de-harshing. |
 | **Studio Open-Back** | Sennheiser HD600/650/800, DT990/1990, Hifiman | Sub-bass extension shelf (+5dB @ 40Hz) to restore open-back bass roll-off, smooths 8.5kHz treble peaks, and expands depth. |
@@ -42,8 +42,8 @@ Dynamic psychoacoustic anti-masking adapts automatically to your real-world acou
 
 - Direct Form II Transposed Bi-quad IIR filters with click-free parameter interpolation.
 - **Factory Presets**:
-  - `Dolby Atmos Cinema 3D`: Deep cinematic sub-bass, crystal dialogue presence, immersive 360 soundfield.
-  - `Bang & Olufsen Signature`: BeoPlay acoustic warmth, silky smooth highs, open soundstage.
+  - `Dolby Atm*s Cinema 3D`: Deep cinematic sub-bass, crystal dialogue presence, immersive 360 soundfield.
+  - `B*ng & Olufsen Signature`: BeoPlay acoustic warmth, silky smooth highs, open soundstage.
   - `Apple Spatial Air & Punch`: Modern punchy low-end, crisp vocal clarity, pristine sparkle.
   - `Laptop Speaker Resonator Fix`: Eliminates boxy chassis resonance (300–600 Hz), psychoacoustic sub-bass, stereo widener.
   - `DTS:X Spatial Gaming 3D`: Snappy footstep transients, pinpoint directional cues, explosion rumble.
@@ -82,12 +82,12 @@ sonic_aura --earphone airpods --env cafe
 
 ### TUI Keyboard Shortcuts:
 - **`[Tab]`**: Switch focus between **Presets**, **10-Band EQ**, and **AI Boost Sliders**.
-- **`[P]`**: Cycle Presets (*Dolby Atmos*, *Bang & Olufsen*, *Apple Spatial*, *Laptop Fix*, *DTS:X Gaming*, etc.).
+- **`[P]`**: Cycle Presets (*Dolby Atm*s*, *B*ng & Olufsen*, *Apple Spatial*, *Laptop Fix*, *DTS:X Gaming*, etc.).
 - **`[E]`**: Cycle **Earphone Calibration Profiles** (*Budget Earbuds* ↔ *AirPods/TWS* ↔ *Bass-Heavy* ↔ *Audiophile IEM* ↔ *Open-Back Studio* ↔ *Closed-Back Studio*).
 - **`[N]`**: Cycle **Environmental Modes** (*🏙️ City Traffic* ↔ *✈️ Transit/Airplane* ↔ *☕ Cafe/Office* ↔ *🍃 Quiet Remote* ↔ *🌙 Late Night* ↔ *🏠 Standard*).
 - **`[← / → / ↑ / ↓]`**: Adjust EQ gains and AI enhancement parameters.
 - **`[Space]`**: Instant **A/B Bypass Toggle** to hear the immediate difference against raw audio.
-- **`[M]`**: Switch Output Mode (*🎧 Headphones 3D Atmos* ↔ *💻 Laptop Speakers* ↔ *🎛️ Studio Reference*).
+- **`[M]`**: Switch Output Mode (*🎧 Headphones 3D Atm*s* ↔ *💻 Laptop Speakers* ↔ *🎛️ Studio Reference*).
 - **`[A]`**: Toggle AI Adaptive Dynamic Boost.
 - **`[S]`**: Save current EQ & tuning to `~/.config/sonic_aura/config.toml`.
 - **`[Q]`**: Exit.
