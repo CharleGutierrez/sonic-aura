@@ -2,6 +2,8 @@
 mod tests {
     use sonic_aura::dsp::ai_analyzer::AiSpectralAnalyzer;
     use sonic_aura::dsp::biquad::{Biquad, FilterType};
+    use sonic_aura::dsp::earphone_profiler::EarphoneType;
+    use sonic_aura::dsp::environment_adapter::EnvironmentMode;
     use sonic_aura::dsp::equalizer::Equalizer;
     use sonic_aura::dsp::exciter::HarmonicExciter;
     use sonic_aura::dsp::limiter::Limiter;
@@ -30,7 +32,6 @@ mod tests {
         let mut bass = PsychoacousticBass::new(48000.0);
         bass.set_intensity(1.0);
 
-        // Feed 50Hz sine wave (sub-bass)
         let mut harmonic_energy = 0.0;
         for i in 0..2000 {
             let t = i as f32 / 48000.0;
@@ -49,7 +50,6 @@ mod tests {
         exciter.set_air_mix(0.8);
         exciter.set_drive(0.8);
 
-        // Feed 8kHz tone
         let mut out_energy = 0.0;
         for i in 0..1000 {
             let t = i as f32 / 48000.0;
@@ -79,10 +79,9 @@ mod tests {
         let mut limiter = Limiter::new(48000.0, 1.5, -0.1, 50.0);
         let ceiling = 10.0_f32.powf(-0.1 / 20.0);
 
-        // Feed excessive +12dB peaks
         for i in 0..5000 {
             let t = i as f32 / 48000.0;
-            let hot_signal = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 4.0; // +12 dBFS input
+            let hot_signal = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 4.0;
             let (out_l, out_r) = limiter.process(hot_signal, hot_signal);
             assert!(out_l.abs() <= ceiling + 1e-3, "Sample exceeded limiter ceiling: {}", out_l);
             assert!(out_r.abs() <= ceiling + 1e-3, "Sample exceeded limiter ceiling: {}", out_r);
@@ -94,7 +93,6 @@ mod tests {
         let mut analyzer = AiSpectralAnalyzer::new(48000.0);
         analyzer.set_ai_enhancement_amount(1.0);
 
-        // Feed 1000Hz tone with speech formant character
         for i in 0..1024 {
             let t = i as f32 / 48000.0;
             let s = (2.0 * std::f32::consts::PI * 1000.0 * t).sin() * 0.3;
@@ -108,11 +106,37 @@ mod tests {
     #[test]
     fn test_equalizer_bands() {
         let mut eq = Equalizer::new_10_band(48000.0);
-        eq.set_band_gain(0, 6.0); // +6dB at 31Hz
-        eq.set_band_gain(5, -3.0); // -3dB at 1kHz
+        eq.set_band_gain(0, 6.0);
+        eq.set_band_gain(5, -3.0);
 
         let (out_l, out_r) = eq.process(0.5, 0.5);
         assert!(out_l.is_finite() && out_r.is_finite());
+    }
+
+    #[test]
+    fn test_earphone_profiles() {
+        for profile in &EarphoneType::ALL {
+            assert!(!profile.name().is_empty());
+            assert!(!profile.description().is_empty());
+            let offsets = profile.eq_offsets();
+            assert_eq!(offsets.len(), 10);
+            for &g in &offsets {
+                assert!(g >= -15.0 && g <= 15.0);
+            }
+        }
+    }
+
+    #[test]
+    fn test_environment_modes() {
+        for env in &EnvironmentMode::ALL {
+            assert!(!env.name().is_empty());
+            assert!(!env.description().is_empty());
+            let offsets = env.eq_offsets();
+            assert_eq!(offsets.len(), 10);
+            for &g in &offsets {
+                assert!(g >= -15.0 && g <= 15.0);
+            }
+        }
     }
 
     #[test]
@@ -125,17 +149,25 @@ mod tests {
     }
 
     #[test]
-    fn test_full_pipeline_audio_chain() {
+    fn test_full_pipeline_with_earphones_and_environments() {
         let mut pipeline = AudioPipeline::new(48000.0);
-        for i in 0..4800 {
-            let t = i as f32 / 48000.0;
-            let s_l = (2.0 * std::f32::consts::PI * 220.0 * t).sin() * 0.3;
-            let s_r = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.3;
-            let (out_l, out_r) = pipeline.process_stereo_sample(s_l, s_r);
-            assert!(out_l.is_finite());
-            assert!(out_r.is_finite());
-            assert!(out_l.abs() <= 1.05);
-            assert!(out_r.abs() <= 1.05);
+
+        for earphone in &EarphoneType::ALL {
+            pipeline.set_earphone_type(*earphone);
+            for env in &EnvironmentMode::ALL {
+                pipeline.set_environment_mode(*env);
+
+                for i in 0..100 {
+                    let t = i as f32 / 48000.0;
+                    let s_l = (2.0 * std::f32::consts::PI * 220.0 * t).sin() * 0.3;
+                    let s_r = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.3;
+                    let (out_l, out_r) = pipeline.process_stereo_sample(s_l, s_r);
+                    assert!(out_l.is_finite());
+                    assert!(out_r.is_finite());
+                    assert!(out_l.abs() <= 1.05);
+                    assert!(out_r.abs() <= 1.05);
+                }
+            }
         }
     }
 }

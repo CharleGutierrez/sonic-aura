@@ -1,5 +1,7 @@
 //! Master Sound Presets: Dolby Atmos, Bang & Olufsen, Apple Spatial, DTS:X, Laptop Fix, etc.
 
+use crate::dsp::earphone_profiler::EarphoneType;
+use crate::dsp::environment_adapter::EnvironmentMode;
 use crate::dsp::pipeline::PipelineConfig;
 use crate::dsp::spatializer::SpatialMode;
 use serde::{Deserialize, Serialize};
@@ -44,6 +46,8 @@ impl Preset {
             } else {
                 SpatialMode::LaptopSpeakers
             },
+            earphone_type: EarphoneType::AirPodsAndTws,
+            environment_mode: EnvironmentMode::CityTraffic,
             transient_attack: self.transient_attack,
             compressor_intensity: self.compressor_intensity,
             dynamic_loudness: self.dynamic_loudness,

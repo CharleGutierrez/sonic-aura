@@ -1,7 +1,9 @@
 //! Interactive Terminal User Interface (TUI) Dashboard
 
 use crate::config::AppConfig;
-use crate::dsp::ai_analyzer::{AudioFeatures, AiAdaptiveParameters, NUM_SPECTRUM_BINS};
+use crate::dsp::ai_analyzer::{AiAdaptiveParameters, AudioFeatures, NUM_SPECTRUM_BINS};
+use crate::dsp::earphone_profiler::EarphoneType;
+use crate::dsp::environment_adapter::EnvironmentMode;
 use crate::dsp::pipeline::{PipelineConfig, SharedPipeline};
 use crate::dsp::spatializer::SpatialMode;
 use crate::presets::PresetManager;
@@ -52,12 +54,15 @@ impl TuiApp {
             presets.select(idx);
         }
 
-        // Apply preset
+        // Apply preset and config
         {
             let mut pl = pipeline.lock().unwrap();
             let p = presets.current();
-            pl.apply_config(&p.to_pipeline_config());
-            pl.eq.set_all_gains(&p.eq_gains_10);
+            let mut cfg = p.to_pipeline_config();
+            cfg.earphone_type = config.earphone_type;
+            cfg.environment_mode = config.environment_mode;
+            pl.apply_config(&cfg);
+            pl.set_all_user_eq_gains(&p.eq_gains_10);
             pl.eq.set_preamp(p.master_gain_db);
         }
 
@@ -68,7 +73,7 @@ impl TuiApp {
             active_panel: ActivePanel::Presets,
             selected_eq_band: 0,
             selected_enhancer: 0,
-            status_message: "Ready. Press [?] for help, [Space] to Bypass, [P] to cycle presets.".to_string(),
+            status_message: "Ready. [P] Presets │ [E] Earphones │ [N] Environment │ [Space] Bypass".to_string(),
             _status_time: Instant::now(),
         }
     }
@@ -146,11 +151,38 @@ impl TuiApp {
                 let p = self.presets.current().clone();
                 {
                     let mut pl = self.pipeline.lock().unwrap();
-                    pl.apply_config(&p.to_pipeline_config());
-                    pl.eq.set_all_gains(&p.eq_gains_10);
+                    let mut cfg = p.to_pipeline_config();
+                    cfg.earphone_type = pl.config.earphone_type;
+                    cfg.environment_mode = pl.config.environment_mode;
+                    pl.apply_config(&cfg);
+                    pl.set_all_user_eq_gains(&p.eq_gains_10);
                     pl.eq.set_preamp(p.master_gain_db);
                 }
                 self.set_status(&format!("Loaded Preset: {}", p.name));
+            }
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                let (_next_earphone, name, desc) = {
+                    let mut pl = self.pipeline.lock().unwrap();
+                    let all = EarphoneType::ALL;
+                    let current_idx = all.iter().position(|&e| e == pl.config.earphone_type).unwrap_or(0);
+                    let next_e = all[(current_idx + 1) % all.len()];
+                    pl.set_earphone_type(next_e);
+                    self.config.earphone_type = next_e;
+                    (next_e, next_e.name(), next_e.description())
+                };
+                self.set_status(&format!("Earphone: {} - {}", name, desc));
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                let (_next_env, name, desc) = {
+                    let mut pl = self.pipeline.lock().unwrap();
+                    let all = EnvironmentMode::ALL;
+                    let current_idx = all.iter().position(|&env| env == pl.config.environment_mode).unwrap_or(0);
+                    let next_env = all[(current_idx + 1) % all.len()];
+                    pl.set_environment_mode(next_env);
+                    self.config.environment_mode = next_env;
+                    (next_env, next_env.name(), next_env.description())
+                };
+                self.set_status(&format!("Environment: {} - {}", name, desc));
             }
             KeyCode::Char(' ') => {
                 let state_str = {
@@ -202,7 +234,7 @@ impl TuiApp {
                 if self.active_panel == ActivePanel::Equalizer {
                     {
                         let mut pl = self.pipeline.lock().unwrap();
-                        pl.eq.set_band_gain(self.selected_eq_band, 0.0);
+                        pl.set_user_eq_gain(self.selected_eq_band, 0.0);
                     }
                     self.set_status("Reset EQ band to 0.0 dB");
                 }
@@ -218,16 +250,19 @@ impl TuiApp {
                 let p = self.presets.current().clone();
                 {
                     let mut pl = self.pipeline.lock().unwrap();
-                    pl.apply_config(&p.to_pipeline_config());
-                    pl.eq.set_all_gains(&p.eq_gains_10);
+                    let mut cfg = p.to_pipeline_config();
+                    cfg.earphone_type = pl.config.earphone_type;
+                    cfg.environment_mode = pl.config.environment_mode;
+                    pl.apply_config(&cfg);
+                    pl.set_all_user_eq_gains(&p.eq_gains_10);
                     pl.eq.set_preamp(p.master_gain_db);
                 }
                 self.set_status(&format!("Selected Preset: {}", p.name));
             }
             ActivePanel::Equalizer => {
                 let mut pl = self.pipeline.lock().unwrap();
-                let current = pl.eq.get_band_gain(self.selected_eq_band);
-                pl.eq.set_band_gain(self.selected_eq_band, current + 0.5);
+                let current = pl.user_eq_gains[self.selected_eq_band];
+                pl.set_user_eq_gain(self.selected_eq_band, current + 0.5);
             }
             ActivePanel::Enhancers => {
                 if self.selected_enhancer == 0 {
@@ -246,16 +281,19 @@ impl TuiApp {
                 let p = self.presets.current().clone();
                 {
                     let mut pl = self.pipeline.lock().unwrap();
-                    pl.apply_config(&p.to_pipeline_config());
-                    pl.eq.set_all_gains(&p.eq_gains_10);
+                    let mut cfg = p.to_pipeline_config();
+                    cfg.earphone_type = pl.config.earphone_type;
+                    cfg.environment_mode = pl.config.environment_mode;
+                    pl.apply_config(&cfg);
+                    pl.set_all_user_eq_gains(&p.eq_gains_10);
                     pl.eq.set_preamp(p.master_gain_db);
                 }
                 self.set_status(&format!("Selected Preset: {}", p.name));
             }
             ActivePanel::Equalizer => {
                 let mut pl = self.pipeline.lock().unwrap();
-                let current = pl.eq.get_band_gain(self.selected_eq_band);
-                pl.eq.set_band_gain(self.selected_eq_band, current - 0.5);
+                let current = pl.user_eq_gains[self.selected_eq_band];
+                pl.set_user_eq_gain(self.selected_eq_band, current - 0.5);
             }
             ActivePanel::Enhancers => {
                 self.selected_enhancer = (self.selected_enhancer + 1) % 8;
@@ -343,15 +381,21 @@ impl TuiApp {
         };
 
         let ai_badge = if snap.config.ai_boost_enabled {
-            Span::styled(" [AI BOOST: ON] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            Span::styled(" [AI: ON] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
         } else {
-            Span::styled(" [AI BOOST: OFF] ", Style::default().fg(Color::DarkGray))
+            Span::styled(" [AI: OFF] ", Style::default().fg(Color::DarkGray))
         };
+
+        let earphone_str = format!("🎧 {}", snap.config.earphone_type.name());
+        let env_str = snap.config.environment_mode.name();
 
         let header_text = Line::from(vec![
             Span::styled(" ⚡ SONIC AURA AI ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            Span::styled("│ Dolby & B&O Psychoacoustic DSP Engine │ ", Style::default().fg(Color::Gray)),
-            Span::styled(format!("{} │ ", mode_name(snap.config.spatial_mode)), Style::default().fg(Color::Magenta)),
+            Span::styled("│ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(earphone_str, Style::default().fg(Color::LightCyan)),
+            Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(env_str, Style::default().fg(Color::LightGreen)),
+            Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
             ai_badge,
             Span::raw(" "),
             status_badge,
@@ -372,12 +416,12 @@ impl TuiApp {
             ])
             .split(area);
 
-        // Top Split: Spectrum Visualizer (60%) + AI Telemetry (40%)
+        // Top Split: Spectrum Visualizer (55%) + AI & Acoustic Telemetry (45%)
         let top_cols = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Percentage(60),
-                Constraint::Percentage(40),
+                Constraint::Percentage(55),
+                Constraint::Percentage(45),
             ])
             .split(rows[0]);
 
@@ -434,35 +478,31 @@ impl TuiApp {
         let adapt = &snap.adaptive_params;
 
         let block = Block::default()
-            .title(" 🧠 AI Psychoacoustic Telemetry ")
+            .title(" 🧠 AI Psychoacoustic & Environment Telemetry ")
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Cyan));
 
         let text = vec![
             Line::from(vec![
-                Span::styled("Voice / Dialogue Index: ", Style::default().fg(Color::Gray)),
+                Span::styled("Earphone Target: ", Style::default().fg(Color::Gray)),
+                Span::styled(snap.config.earphone_type.name(), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::styled("Acoustic Context: ", Style::default().fg(Color::Gray)),
+                Span::styled(snap.config.environment_mode.name(), Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+            ]),
+            Line::from(vec![
+                Span::styled("Dialogue Index: ", Style::default().fg(Color::Gray)),
                 Span::styled(format!("{:.0}%", feat.voice_probability * 100.0), Style::default().fg(if feat.voice_probability > 0.5 { Color::Green } else { Color::White })),
                 Span::raw(" │ Centroid: "),
                 Span::styled(format!("{:.0} Hz", feat.spectral_centroid), Style::default().fg(Color::Yellow)),
             ]),
             Line::from(vec![
-                Span::styled("Loudness (LUFS): ", Style::default().fg(Color::Gray)),
+                Span::styled("Loudness: ", Style::default().fg(Color::Gray)),
                 Span::styled(format!("{:.1} LUFS", feat.perceived_loudness_lufs), Style::default().fg(Color::LightBlue)),
-                Span::raw(" │ Flux: "),
-                Span::styled(format!("{:.2}", feat.spectral_flux), Style::default().fg(Color::LightMagenta)),
-            ]),
-            Line::from(vec![
-                Span::styled("Bass Energy: ", Style::default().fg(Color::Gray)),
-                Span::styled(format!("{:.0}%", feat.bass_energy * 100.0), Style::default().fg(Color::Cyan)),
-                Span::raw(" │ Air Sheen: "),
-                Span::styled(format!("{:.0}%", feat.treble_energy * 100.0), Style::default().fg(Color::Cyan)),
-            ]),
-            Line::from(vec![
-                Span::styled("Dynamic Vocal Lift: ", Style::default().fg(Color::LightGreen)),
+                Span::raw(" │ AI Vocal Lift: "),
                 Span::styled(format!("+{:.1} dB", adapt.dynamic_eq_vocal_boost_db), Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
-                Span::raw(" │ Bass Tighten: "),
-                Span::styled(format!("+{:.1} dB", adapt.dynamic_eq_bass_tighten_db), Style::default().fg(Color::LightGreen)),
             ]),
         ];
 
@@ -475,7 +515,7 @@ impl TuiApp {
         let border_color = if is_focused { Color::Yellow } else { Color::DarkGray };
 
         let block = Block::default()
-            .title(" 🎚️ 10-Band Precision Equalizer (ISO Standard) ")
+            .title(" 🎚️ 10-Band Precision Equalizer (ISO + Calibrated) ")
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(border_color));
@@ -601,15 +641,15 @@ impl TuiApp {
 
         let help_text = Line::from(vec![
             Span::styled(" [Tab] ", Style::default().fg(Color::Black).bg(Color::White)),
-            Span::raw(" Switch Panel │ "),
-            Span::styled(" [←/→/↑/↓] ", Style::default().fg(Color::Black).bg(Color::White)),
-            Span::raw(" Adjust │ "),
+            Span::raw(" Panel │ "),
             Span::styled(" [P] ", Style::default().fg(Color::Black).bg(Color::White)),
             Span::styled(format!(" Preset ({}) │ ", preset_name), Style::default().fg(Color::Magenta)),
+            Span::styled(" [E] ", Style::default().fg(Color::Black).bg(Color::White)),
+            Span::styled(" Earphone │ ", Style::default().fg(Color::LightCyan)),
+            Span::styled(" [N] ", Style::default().fg(Color::Black).bg(Color::White)),
+            Span::styled(" Environment │ ", Style::default().fg(Color::LightGreen)),
             Span::styled(" [Space] ", Style::default().fg(Color::Black).bg(Color::White)),
             Span::raw(" Bypass │ "),
-            Span::styled(" [M] ", Style::default().fg(Color::Black).bg(Color::White)),
-            Span::raw(" Mode │ "),
             Span::styled(" [S] ", Style::default().fg(Color::Black).bg(Color::White)),
             Span::raw(" Save │ "),
             Span::styled(" [Q] ", Style::default().fg(Color::Black).bg(Color::White)),
@@ -625,13 +665,5 @@ impl TuiApp {
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(Color::Cyan)));
 
         f.render_widget(footer_widget, area);
-    }
-}
-
-fn mode_name(mode: SpatialMode) -> &'static str {
-    match mode {
-        SpatialMode::HeadphonesBinaural => "🎧 Headphones 3D Atmos",
-        SpatialMode::LaptopSpeakers => "💻 Laptop Speaker Lens",
-        SpatialMode::StudioNearfield => "🎛️ Studio Reference",
     }
 }

@@ -1,6 +1,8 @@
 pub mod ai_analyzer;
 pub mod biquad;
 pub mod compressor;
+pub mod earphone_profiler;
+pub mod environment_adapter;
 pub mod equalizer;
 pub mod exciter;
 pub mod limiter;

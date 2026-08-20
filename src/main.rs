@@ -16,6 +16,8 @@ use audio::test_synth::SynthTone;
 use audio::virtual_device::VirtualSinkManager;
 use clap::Parser;
 use config::AppConfig;
+use dsp::earphone_profiler::EarphoneType;
+use dsp::environment_adapter::EnvironmentMode;
 use dsp::pipeline::AudioPipeline;
 use presets::PresetManager;
 use std::path::PathBuf;
@@ -28,7 +30,7 @@ use ui::tui_app::TuiApp;
     name = "sonic_aura",
     author = "SonicAura AI Audio Engine",
     version = "0.1.0",
-    about = "Dolby Atmos & Bang & Olufsen-grade AI Sound Enhancer, 10-Band EQ, 3D Spatializer & Dynamic Exciter for Speakers and Headphones"
+    about = "Universal Dolby Atmos & Bang & Olufsen-grade AI Sound Enhancer: Adapts to ANY Earphone & ANY Environment (City to Remote)"
 )]
 struct Args {
     /// Launch in Demo Synth Mode (immediate playback with rich binaural test music)
@@ -42,6 +44,18 @@ struct Args {
     /// Initial preset to load (e.g. "Dolby Atmos", "Bang & Olufsen", "Laptop Speaker Fix", "DTS:X Gaming")
     #[arg(short, long)]
     preset: Option<String>,
+
+    /// Earphone/Headphone hardware profile (budget, airpods, bass, iem, open-back, closed-back, neutral)
+    #[arg(short = 'e', long)]
+    earphone: Option<String>,
+
+    /// Acoustic environment context (city, transit, cafe, remote, whisper, neutral)
+    #[arg(short = 'E', long)]
+    env: Option<String>,
+
+    /// List all earphone calibration profiles and environment modes
+    #[arg(long)]
+    list_profiles: bool,
 
     /// Run in headless daemon mode (no TUI)
     #[arg(short = 'D', long)]
@@ -107,7 +121,23 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // 3. Handle List Devices
+    // 3. Handle List Profiles
+    if args.list_profiles {
+        println!("=== 🎧 Universal Earphone Hardware Calibration Profiles ===");
+        for e in &EarphoneType::ALL {
+            println!("\n  [{:?}] {}", e, e.name());
+            println!("   {}", e.description());
+        }
+
+        println!("\n=== 🌍 Adaptive Acoustic Environment Modes ===");
+        for env in &EnvironmentMode::ALL {
+            println!("\n  [{:?}] {}", env, env.name());
+            println!("   {}", env.description());
+        }
+        return Ok(());
+    }
+
+    // 4. Handle List Devices
     if args.list_devices {
         println!("=== SonicAura Audio Devices ===");
         let (inputs, outputs) = AudioEngine::get_available_devices();
@@ -122,13 +152,13 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // 4. Handle DSP Benchmark
+    // 5. Handle DSP Benchmark
     if args.benchmark {
         run_benchmark();
         return Ok(());
     }
 
-    // 5. Handle Offline File Processing
+    // 6. Handle Offline File Processing
     if let Some(ref input_path) = args.process_file {
         let output_path = args.output.unwrap_or_else(|| {
             let stem = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("audio");
@@ -158,8 +188,47 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // 6. Real-time Audio Engine Setup
-    let config = AppConfig::load();
+    // 7. Real-time Audio Engine Setup
+    let mut config = AppConfig::load();
+
+    // Override earphone from CLI if provided
+    if let Some(ref e_str) = args.earphone {
+        let e_lower = e_str.to_lowercase();
+        if e_lower.contains("budget") || e_lower.contains("cheap") {
+            config.earphone_type = EarphoneType::BudgetEarbudsFix;
+        } else if e_lower.contains("airpod") || e_lower.contains("tws") {
+            config.earphone_type = EarphoneType::AirPodsAndTws;
+        } else if e_lower.contains("bass") || e_lower.contains("beat") {
+            config.earphone_type = EarphoneType::BassHeavyCommercial;
+        } else if e_lower.contains("iem") || e_lower.contains("audio") {
+            config.earphone_type = EarphoneType::IemAudiophile;
+        } else if e_lower.contains("open") {
+            config.earphone_type = EarphoneType::StudioOpenBack;
+        } else if e_lower.contains("close") {
+            config.earphone_type = EarphoneType::StudioClosedBack;
+        } else if e_lower.contains("flat") || e_lower.contains("neutral") {
+            config.earphone_type = EarphoneType::UniversalNeutral;
+        }
+    }
+
+    // Override environment from CLI if provided
+    if let Some(ref env_str) = args.env {
+        let env_lower = env_str.to_lowercase();
+        if env_lower.contains("city") || env_lower.contains("traffic") {
+            config.environment_mode = EnvironmentMode::CityTraffic;
+        } else if env_lower.contains("transit") || env_lower.contains("plane") || env_lower.contains("subway") {
+            config.environment_mode = EnvironmentMode::CommuteTransit;
+        } else if env_lower.contains("cafe") || env_lower.contains("office") {
+            config.environment_mode = EnvironmentMode::CafeOffice;
+        } else if env_lower.contains("remote") || env_lower.contains("quiet") || env_lower.contains("nature") {
+            config.environment_mode = EnvironmentMode::QuietRemote;
+        } else if env_lower.contains("night") || env_lower.contains("whisper") {
+            config.environment_mode = EnvironmentMode::LateNightWhisper;
+        } else if env_lower.contains("neutral") || env_lower.contains("studio") {
+            config.environment_mode = EnvironmentMode::NeutralStudio;
+        }
+    }
+
     let sample_rate = config.sample_rate as f32;
     let pipeline = Arc::new(Mutex::new(AudioPipeline::new(sample_rate)));
 
@@ -176,7 +245,6 @@ fn main() -> Result<()> {
         _ => SynthTone::MusicAcousticDemo,
     };
 
-    // Try starting the CPAL audio stream
     let input_dev = args.input_device.or_else(|| config.input_device.clone());
     let output_dev = args.output_device.or_else(|| config.output_device.clone());
 
@@ -192,8 +260,10 @@ fn main() -> Result<()> {
         Ok(engine) => {
             if args.daemon {
                 println!("⚡ SonicAura AI Daemon running in background...");
-                println!("  Input:  {}", engine.input_device_name);
-                println!("  Output: {}", engine.output_device_name);
+                println!("  Input:       {}", engine.input_device_name);
+                println!("  Output:      {}", engine.output_device_name);
+                println!("  Earphone:    {}", config.earphone_type.name());
+                println!("  Environment: {}", config.environment_mode.name());
                 println!("  Sample Rate: {} Hz", engine.sample_rate);
                 println!("Press Ctrl+C to terminate.");
                 loop {
@@ -205,7 +275,7 @@ fn main() -> Result<()> {
             }
         }
         Err(e) => {
-            eprintln!("⚠️ Audio device initialization notice: {}", e);
+            eprintln!("⚠️ Audio device notice: {}", e);
             eprintln!("Launching in Interactive TUI Offline/Benchmarking mode...");
             let mut app = TuiApp::new(pipeline, config);
             app.run()?;

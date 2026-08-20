@@ -1,5 +1,7 @@
 //! Application Configuration Management (TOML persistence)
 
+use crate::dsp::earphone_profiler::EarphoneType;
+use crate::dsp::environment_adapter::EnvironmentMode;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -17,6 +19,8 @@ pub struct AppConfig {
     pub air_mix: f32,
     pub stereo_width: f32,
     pub headphone_mode: bool,
+    pub earphone_type: EarphoneType,
+    pub environment_mode: EnvironmentMode,
     pub custom_eq_10: [f32; 10],
     pub master_gain_db: f32,
 }
@@ -35,6 +39,8 @@ impl Default for AppConfig {
             air_mix: 0.65,
             stereo_width: 1.35,
             headphone_mode: true,
+            earphone_type: EarphoneType::AirPodsAndTws,
+            environment_mode: EnvironmentMode::CityTraffic,
             custom_eq_10: [0.0; 10],
             master_gain_db: 0.0,
         }
