@@ -1,7 +1,7 @@
 //! Master Audio Processing Engine Pipeline
 //! Unifies EQ, AI Analysis, Earphone Calibration, Environmental Adaptation,
 //! Psychoacoustic Bass, Harmonic Excitation, 3D Spatializer, Multiband Compressor, and True-Peak Limiter.
-//! Features Time-Aligned De-Clicking Crossfade and 18Hz Infrasonic DC/Rumble Blocking.
+//! Features Time-Aligned De-Clicking Crossfade, 18Hz Infrasonic DC/Rumble Blocking, and Noise Floor Squelch.
 
 use crate::dsp::ai_analyzer::AiSpectralAnalyzer;
 use crate::dsp::biquad::{Biquad, FilterType};
@@ -87,6 +87,9 @@ pub struct AudioPipeline {
     // Smooth de-clicking crossfade gain for [Space] bypass toggle (0.0 = bypass, 1.0 = active)
     current_fade: f32,
     fade_step: f32,
+
+    // Dynamic noise gate envelope
+    gate_envelope: f32,
 }
 
 impl AudioPipeline {
@@ -120,6 +123,7 @@ impl AudioPipeline {
             dry_delay_len: lookahead_samples,
             current_fade: 1.0,
             fade_step,
+            gate_envelope: 1.0,
         };
         pipeline.apply_config(&config);
         pipeline
@@ -214,8 +218,16 @@ impl AudioPipeline {
     #[inline(always)]
     pub fn process_stereo_sample(&mut self, raw_in_l: f32, raw_in_r: f32) -> (f32, f32) {
         // Strip inaudible sub-sonic DC offset / flutter rumble
-        let in_l = self.dc_blocker_l.process(raw_in_l);
-        let in_r = self.dc_blocker_r.process(raw_in_r);
+        let filtered_l = self.dc_blocker_l.process(raw_in_l);
+        let filtered_r = self.dc_blocker_r.process(raw_in_r);
+
+        // Soft Noise Floor Gate: if signal is below -70dBFS (silence/pause), eliminate DAC hiss
+        let signal_level = filtered_l.abs().max(filtered_r.abs());
+        let gate_target = if signal_level > 0.0003 { 1.0 } else { 0.0 };
+        self.gate_envelope += (gate_target - self.gate_envelope) * 0.02;
+
+        let in_l = filtered_l * self.gate_envelope;
+        let in_r = filtered_r * self.gate_envelope;
 
         // Maintain time-aligned dry delay line to match limiter lookahead
         let dry_l = self.dry_delay_l[self.dry_delay_idx];
@@ -306,6 +318,7 @@ impl AudioPipeline {
         self.dc_blocker_r.reset();
         self.dry_delay_l.fill(0.0);
         self.dry_delay_r.fill(0.0);
+        self.gate_envelope = 1.0;
     }
 }
 
