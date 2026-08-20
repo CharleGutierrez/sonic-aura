@@ -503,15 +503,6 @@ impl TuiApp {
         let adapt = &snap.adaptive_params;
 
         let active_sink = self.active_sink_name.lock().map(|s| s.clone()).unwrap_or_else(|_| "Auto".to_string());
-        let short_sink = if active_sink.contains("analog") || active_sink.contains("pci") {
-            "💻 Laptop Speakers (Analog Stereo)"
-        } else if active_sink.contains("bluez") {
-            "🎧 Bluetooth Headphones"
-        } else if active_sink.contains("SonicAura") {
-            "⚡ SonicAura AI Virtual Sink"
-        } else {
-            &active_sink
-        };
 
         let block = Block::default()
             .title(" 🧠 AI & Real-Time Output Sound Telemetry ")
@@ -522,7 +513,7 @@ impl TuiApp {
         let text = vec![
             Line::from(vec![
                 Span::styled("Tracked Audio Output: ", Style::default().fg(Color::Yellow)),
-                Span::styled(short_sink, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+                Span::styled(active_sink, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             ]),
             Line::from(vec![
                 Span::styled("Earphone Target: ", Style::default().fg(Color::Gray)),

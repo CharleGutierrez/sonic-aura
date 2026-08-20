@@ -1,14 +1,12 @@
-//! Real-Time Non-Blocking Dynamic System Sound Capture Engine
-//! Features:
-//! - Non-blocking asynchronous pipe I/O (prevents hanging when sinks are suspended or idle)
-//! - Fast 150ms sink change polling & debounced switching (immune to rapid toggling)
-//! - Auto-recovery watchdog (detects dead or crashed capture processes and respawns cleanly)
-//! - Tracks any active sound output (Laptop Speakers, Bluetooth Earbuds, USB Audio, HDMI, Virtual Sink)
+//! Real-Time Universal System Sound Capture Engine with PipeWire Port-Linker
+//! Automatically detects and links all active output monitor ports (Laptop Speakers,
+//! Bluetooth Earphones, USB Audio, HDMI) so that YouTube, Spotify, and system audio
+//! immediately drive the 32-Band FFT Spectrum Analyzer and VU Meters in real time!
 
 use crate::dsp::pipeline::SharedPipeline;
 use std::io::Read;
 use std::os::unix::io::AsRawFd;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -21,16 +19,16 @@ pub struct SystemSoundCapture {
 }
 
 impl SystemSoundCapture {
-    /// Starts the dynamic auto-capturing engine with non-blocking pipe I/O and rapid sink-switching immunity
+    /// Starts the dynamic auto-capturing engine
     pub fn start_auto_capture(pipeline: SharedPipeline) -> Option<Self> {
         let is_running = Arc::new(AtomicBool::new(true));
-        let active_sink_name = Arc::new(Mutex::new(Self::detect_active_output_sink().unwrap_or_else(|| "0".to_string())));
+        let active_sink_name = Arc::new(Mutex::new("Auto-Detecting Output...".to_string()));
 
         let is_running_clone = Arc::clone(&is_running);
         let active_sink_clone = Arc::clone(&active_sink_name);
 
         let capture_thread = thread::spawn(move || {
-            Self::supervisor_loop(pipeline, is_running_clone, active_sink_clone);
+            Self::universal_capture_loop(pipeline, is_running_clone, active_sink_clone);
         });
 
         Some(Self {
@@ -40,82 +38,84 @@ impl SystemSoundCapture {
         })
     }
 
-    /// Detects whichever sink is currently the system default output sink
-    pub fn detect_active_output_sink() -> Option<String> {
-        // 1. Try pactl get-default-sink (fastest & most accurate)
-        if let Ok(output) = Command::new("pactl").arg("get-default-sink").output() {
-            if output.status.success() {
-                let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !name.is_empty() {
-                    return Some(name);
-                }
-            }
-        }
-
-        // 2. Try pactl info fallback
-        if let Ok(output) = Command::new("pactl").arg("info").output() {
+    /// Links all available output monitor ports to pw-record
+    fn link_all_monitors() {
+        if let Ok(output) = Command::new("pw-link").arg("-o").output() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
-                if line.starts_with("Default Sink:") {
-                    let name = line.replace("Default Sink:", "").trim().to_string();
-                    if !name.is_empty() {
-                        return Some(name);
+                let port = line.trim();
+                if port.contains("monitor") && !port.contains("pw-record") {
+                    if port.contains("FL") || port.contains("left") || port.ends_with("_1") {
+                        let _ = Command::new("pw-link")
+                            .args([port, "pw-record:input_FL"])
+                            .output();
+                    } else if port.contains("FR") || port.contains("right") || port.ends_with("_2") {
+                        let _ = Command::new("pw-link")
+                            .args([port, "pw-record:input_FR"])
+                            .output();
+                    } else {
+                        let _ = Command::new("pw-link")
+                            .args([port, "pw-record:input_FL"])
+                            .output();
+                        let _ = Command::new("pw-link")
+                            .args([port, "pw-record:input_FR"])
+                            .output();
                     }
                 }
             }
         }
+    }
 
-        // 3. Try pactl list sinks short (find first available sink)
-        if let Ok(output) = Command::new("pactl").args(["list", "sinks", "short"]).output() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    return Some(parts[1].to_string());
+    /// Detects current human-readable active output sink
+    fn get_active_sink_display() -> String {
+        if let Ok(output) = Command::new("pactl").arg("get-default-sink").output() {
+            if output.status.success() {
+                let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if name.contains("analog") || name.contains("pci") {
+                    return "💻 Laptop Speakers (Analog Stereo)".to_string();
+                } else if name.contains("bluez") {
+                    return "🎧 Bluetooth Headphones".to_string();
+                } else if name.contains("SonicAura") {
+                    return "⚡ SonicAura AI Virtual Sink".to_string();
+                } else if !name.is_empty() {
+                    return name;
                 }
             }
         }
-
-        Some("0".to_string())
+        "💻 Laptop Speakers (Default)".to_string()
     }
 
-    /// Spawns a low-latency PCM reader process with non-blocking stdout pipe
-    fn spawn_nonblocking_reader(sink: &str) -> Option<Child> {
-        let has_pw_record = Command::new("pw-record")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+    fn universal_capture_loop(
+        pipeline: SharedPipeline,
+        is_running: Arc<AtomicBool>,
+        active_sink_name: Arc<Mutex<String>>,
+    ) {
+        // Spawn pw-record process with unlinked target (target 0)
+        let mut child = Command::new("pw-record")
+            .args([
+                "--target",
+                "0",
+                "--format",
+                "s16",
+                "--rate",
+                "48000",
+                "--channels",
+                "2",
+                "--latency",
+                "256",
+                "-",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok();
 
-        let mut child = if has_pw_record {
-            Command::new("pw-record")
-                .args([
-                    "--target",
-                    sink,
-                    "--format",
-                    "s16",
-                    "--rate",
-                    "48000",
-                    "--channels",
-                    "2",
-                    "--latency",
-                    "256",
-                    "-",
-                ])
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-                .ok()
-        } else {
-            let monitor_source = if sink.ends_with(".monitor") {
-                sink.to_string()
-            } else {
-                format!("{}.monitor", sink)
-            };
-            Command::new("parec")
+        // Fallback to parec if pw-record is unavailable
+        if child.is_none() {
+            child = Command::new("parec")
                 .args([
                     "-d",
-                    &monitor_source,
+                    "@DEFAULT_SINK@.monitor",
                     "--format=s16le",
                     "--rate=48000",
                     "--channels=2",
@@ -124,10 +124,10 @@ impl SystemSoundCapture {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
                 .spawn()
-                .ok()
-        };
+                .ok();
+        }
 
-        // Set O_NONBLOCK on the child stdout pipe so read() NEVER hangs indefinitely on dead/suspended sinks
+        // Set non-blocking on stdout pipe
         if let Some(ref mut c) = child {
             if let Some(ref stdout) = c.stdout {
                 let fd = stdout.as_raw_fd();
@@ -140,109 +140,46 @@ impl SystemSoundCapture {
             }
         }
 
-        child
-    }
+        // Brief delay to allow pw-record ports to register with PipeWire
+        thread::sleep(Duration::from_millis(80));
+        Self::link_all_monitors();
 
-    /// Cleanly terminates a child process without blocking the thread
-    fn kill_child(mut child: Child) {
-        let _ = child.kill();
-        let _ = child.try_wait();
-    }
-
-    fn supervisor_loop(
-        pipeline: SharedPipeline,
-        is_running: Arc<AtomicBool>,
-        active_sink_name: Arc<Mutex<String>>,
-    ) {
-        let mut current_sink = Self::detect_active_output_sink().unwrap_or_else(|| "0".to_string());
-        if let Ok(mut lock) = active_sink_name.lock() {
-            *lock = current_sink.clone();
-        }
-
-        let mut child_opt = Self::spawn_nonblocking_reader(&current_sink);
-        let mut last_sink_poll = Instant::now();
-        let mut last_valid_read = Instant::now();
-        let mut pending_new_sink: Option<String> = None;
-        let mut debounce_timer = Instant::now();
+        let mut last_link_check = Instant::now();
         let mut raw_buf = [0u8; 1024];
 
         while is_running.load(Ordering::Relaxed) {
-            // 1. Poll for sink changes every 150ms with 100ms anti-flapping debounce
-            if last_sink_poll.elapsed() >= Duration::from_millis(150) {
-                last_sink_poll = Instant::now();
-                if let Some(detected) = Self::detect_active_output_sink() {
-                    if detected != current_sink {
-                        if pending_new_sink.as_ref() == Some(&detected) {
-                            if debounce_timer.elapsed() >= Duration::from_millis(100) {
-                                // Apply the debounced sink change
-                                current_sink = detected.clone();
-                                pending_new_sink = None;
+            // Periodically refresh links and active sink display every 400ms
+            if last_link_check.elapsed() >= Duration::from_millis(400) {
+                last_link_check = Instant::now();
+                Self::link_all_monitors();
 
-                                if let Ok(mut lock) = active_sink_name.lock() {
-                                    *lock = current_sink.clone();
-                                }
-
-                                if let Some(old_child) = child_opt.take() {
-                                    Self::kill_child(old_child);
-                                }
-                                child_opt = Self::spawn_nonblocking_reader(&current_sink);
-                                last_valid_read = Instant::now();
-                            }
-                        } else {
-                            pending_new_sink = Some(detected);
-                            debounce_timer = Instant::now();
-                        }
-                    } else {
-                        pending_new_sink = None;
-                    }
+                let disp = Self::get_active_sink_display();
+                if let Ok(mut lock) = active_sink_name.lock() {
+                    *lock = disp;
                 }
             }
 
-            // 2. Check health of active child reader
-            let mut is_child_dead = false;
-            if let Some(ref mut child) = child_opt {
-                if let Ok(Some(_)) = child.try_wait() {
-                    is_child_dead = true;
-                }
-            } else {
-                is_child_dead = true;
-            }
-
-            if is_child_dead {
-                if let Some(old_child) = child_opt.take() {
-                    Self::kill_child(old_child);
-                }
-                child_opt = Self::spawn_nonblocking_reader(&current_sink);
-                last_valid_read = Instant::now();
-                thread::sleep(Duration::from_millis(10));
-                continue;
-            }
-
-            // 3. Non-blocking read from child stdout
             let mut read_bytes = 0;
-            if let Some(ref mut child) = child_opt {
-                if let Some(ref mut stdout) = child.stdout {
+            if let Some(ref mut c) = child {
+                if let Some(ref mut stdout) = c.stdout {
                     match stdout.read(&mut raw_buf) {
                         Ok(0) => {
-                            // Pipe closed or EOF
-                            thread::sleep(Duration::from_millis(4));
+                            thread::sleep(Duration::from_millis(3));
                         }
                         Ok(n) => {
                             read_bytes = n;
-                            last_valid_read = Instant::now();
                         }
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                            // Non-blocking: no data currently available (sink idle or suspended)
-                            thread::sleep(Duration::from_millis(4));
+                            thread::sleep(Duration::from_millis(3));
                         }
                         Err(_) => {
-                            thread::sleep(Duration::from_millis(4));
+                            thread::sleep(Duration::from_millis(3));
                         }
                     }
                 }
             }
 
-            // 4. Feed audio data into pipeline to process DSP and update 32-Band FFT spectrum
+            // Feed captured samples directly into DSP pipeline & 32-band FFT analyzer
             if read_bytes > 0 {
                 let num_samples = read_bytes / 2;
                 let num_frames = num_samples / 2;
@@ -257,28 +194,12 @@ impl SystemSoundCapture {
                     }
                 }
             }
-
-            // 5. Watchdog: If child has been completely silent for > 3.0s and another sink exists, trigger a clean re-check
-            if last_valid_read.elapsed() >= Duration::from_secs(3) {
-                last_valid_read = Instant::now();
-                if let Some(new_candidate) = Self::detect_active_output_sink() {
-                    if new_candidate != current_sink {
-                        current_sink = new_candidate.clone();
-                        if let Ok(mut lock) = active_sink_name.lock() {
-                            *lock = current_sink.clone();
-                        }
-                        if let Some(old_child) = child_opt.take() {
-                            Self::kill_child(old_child);
-                        }
-                        child_opt = Self::spawn_nonblocking_reader(&current_sink);
-                    }
-                }
-            }
         }
 
-        // Clean up child on shutdown
-        if let Some(child) = child_opt.take() {
-            Self::kill_child(child);
+        // Cleanup on shutdown
+        if let Some(mut c) = child {
+            let _ = c.kill();
+            let _ = c.wait();
         }
     }
 }
