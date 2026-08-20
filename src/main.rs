@@ -12,6 +12,7 @@ mod ui;
 use anyhow::Result;
 use audio::cpal_stream::{AudioEngine, EngineMode};
 use audio::file_processor::FileProcessor;
+use audio::system_capture::SystemSoundCapture;
 use audio::test_synth::SynthTone;
 use audio::virtual_device::VirtualSinkManager;
 use clap::Parser;
@@ -21,6 +22,7 @@ use dsp::environment_adapter::EnvironmentMode;
 use dsp::pipeline::AudioPipeline;
 use presets::PresetManager;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use ui::tui_app::TuiApp;
@@ -232,6 +234,9 @@ fn main() -> Result<()> {
     let sample_rate = config.sample_rate as f32;
     let pipeline = Arc::new(Mutex::new(AudioPipeline::new(sample_rate)));
 
+    // 8. Start Automatic Active Output Sound Capture (detects YouTube, Spotify, Laptop Speakers)
+    let _auto_capture = SystemSoundCapture::start_auto_capture(Arc::clone(&pipeline));
+
     let engine_mode = if args.demo {
         EngineMode::TestSynth
     } else {
@@ -261,11 +266,10 @@ fn main() -> Result<()> {
             let synth_flag = Arc::clone(&engine.synth_enabled);
             if args.daemon {
                 println!("⚡ SonicAura AI Daemon running in background...");
-                println!("  Input:       {}", engine.input_device_name);
-                println!("  Output:      {}", engine.output_device_name);
-                println!("  Earphone:    {}", config.earphone_type.name());
-                println!("  Environment: {}", config.environment_mode.name());
-                println!("  Sample Rate: {} Hz", engine.sample_rate);
+                println!("  Detected Output: {}", engine.output_device_name);
+                println!("  Earphone:        {}", config.earphone_type.name());
+                println!("  Environment:     {}", config.environment_mode.name());
+                println!("  Sample Rate:     {} Hz", engine.sample_rate);
                 println!("Press Ctrl+C to terminate.");
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(1));
@@ -276,9 +280,8 @@ fn main() -> Result<()> {
             }
         }
         Err(e) => {
-            eprintln!("⚠️ Audio device notice: {}", e);
-            eprintln!("Launching in Interactive TUI Offline/Benchmarking mode...");
-            let synth_flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
+            eprintln!("⚠️ Audio engine note: {}", e);
+            let synth_flag = Arc::new(AtomicBool::new(false));
             let mut app = TuiApp::new(pipeline, config, synth_flag);
             app.run()?;
         }
