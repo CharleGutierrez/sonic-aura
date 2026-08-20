@@ -19,7 +19,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Gauge, Paragraph};
 use ratatui::Terminal;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -45,6 +45,7 @@ pub struct TuiApp {
     presets: PresetManager,
     config: AppConfig,
     synth_enabled: Arc<AtomicBool>,
+    active_sink_name: Arc<Mutex<String>>,
     active_panel: ActivePanel,
     selected_eq_band: usize,
     selected_enhancer: usize,
@@ -53,7 +54,12 @@ pub struct TuiApp {
 }
 
 impl TuiApp {
-    pub fn new(pipeline: SharedPipeline, config: AppConfig, synth_enabled: Arc<AtomicBool>) -> Self {
+    pub fn new(
+        pipeline: SharedPipeline,
+        config: AppConfig,
+        synth_enabled: Arc<AtomicBool>,
+        active_sink_name: Arc<Mutex<String>>,
+    ) -> Self {
         let mut presets = PresetManager::new();
         if let Some(idx) = presets.find_by_name(&config.active_preset) {
             presets.select(idx);
@@ -76,10 +82,11 @@ impl TuiApp {
             presets,
             config,
             synth_enabled,
+            active_sink_name,
             active_panel: ActivePanel::Presets,
             selected_eq_band: 0,
             selected_enhancer: 0,
-            status_message: "Ready. [T] Engage Sound/Synth │ [P] Presets │ [E] Earphones │ [N] Environment".to_string(),
+            status_message: "Ready. Auto-tracking laptop output sound in real time!".to_string(),
             _status_time: Instant::now(),
         }
     }
@@ -495,20 +502,33 @@ impl TuiApp {
         let feat = &snap.features;
         let adapt = &snap.adaptive_params;
 
+        let active_sink = self.active_sink_name.lock().map(|s| s.clone()).unwrap_or_else(|_| "Auto".to_string());
+        let short_sink = if active_sink.contains("analog") || active_sink.contains("pci") {
+            "💻 Laptop Speakers (Analog Stereo)"
+        } else if active_sink.contains("bluez") {
+            "🎧 Bluetooth Headphones"
+        } else if active_sink.contains("SonicAura") {
+            "⚡ SonicAura AI Virtual Sink"
+        } else {
+            &active_sink
+        };
+
         let block = Block::default()
-            .title(" 🧠 AI Psychoacoustic & Environment Telemetry ")
+            .title(" 🧠 AI & Real-Time Output Sound Telemetry ")
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Cyan));
 
         let text = vec![
             Line::from(vec![
-                Span::styled("Earphone Target: ", Style::default().fg(Color::Gray)),
-                Span::styled(snap.config.earphone_type.name(), Style::default().fg(Color::LightCyan).add_modifier(Modifier::BOLD)),
+                Span::styled("Tracked Audio Output: ", Style::default().fg(Color::Yellow)),
+                Span::styled(short_sink, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
             ]),
             Line::from(vec![
-                Span::styled("Acoustic Context: ", Style::default().fg(Color::Gray)),
-                Span::styled(snap.config.environment_mode.name(), Style::default().fg(Color::LightGreen).add_modifier(Modifier::BOLD)),
+                Span::styled("Earphone Target: ", Style::default().fg(Color::Gray)),
+                Span::styled(snap.config.earphone_type.name(), Style::default().fg(Color::LightCyan)),
+                Span::raw(" │ Context: "),
+                Span::styled(snap.config.environment_mode.name(), Style::default().fg(Color::LightGreen)),
             ]),
             Line::from(vec![
                 Span::styled("Dialogue Index: ", Style::default().fg(Color::Gray)),

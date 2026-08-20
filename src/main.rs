@@ -235,7 +235,11 @@ fn main() -> Result<()> {
     let pipeline = Arc::new(Mutex::new(AudioPipeline::new(sample_rate)));
 
     // 8. Start Automatic Active Output Sound Capture (detects YouTube, Spotify, Laptop Speakers)
-    let _auto_capture = SystemSoundCapture::start_auto_capture(Arc::clone(&pipeline));
+    let auto_capture = SystemSoundCapture::start_auto_capture(Arc::clone(&pipeline));
+    let active_sink_name = auto_capture
+        .as_ref()
+        .map(|ac| Arc::clone(&ac.active_sink_name))
+        .unwrap_or_else(|| Arc::new(Mutex::new("Auto-Detect".to_string())));
 
     let engine_mode = if args.demo {
         EngineMode::TestSynth
@@ -275,14 +279,14 @@ fn main() -> Result<()> {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                 }
             } else {
-                let mut app = TuiApp::new(pipeline, config, synth_flag);
+                let mut app = TuiApp::new(pipeline, config, synth_flag, active_sink_name);
                 app.run()?;
             }
         }
         Err(e) => {
             eprintln!("⚠️ Audio engine note: {}", e);
             let synth_flag = Arc::new(AtomicBool::new(false));
-            let mut app = TuiApp::new(pipeline, config, synth_flag);
+            let mut app = TuiApp::new(pipeline, config, synth_flag, active_sink_name);
             app.run()?;
         }
     }
