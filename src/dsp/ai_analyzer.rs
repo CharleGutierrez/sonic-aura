@@ -1,17 +1,20 @@
-//! AI Adaptive Spectral Analyzer & Intelligent DSP Controller
-//! Performs real-time psychoacoustic feature extraction (Spectral Centroid, Flux, Voice Activity Index, Band Energies)
-//! and dynamically modulates DSP parameters for optimal crispness, punch, and spatial immersion.
+//! High-Precision AI Spectral Analyzer & 32-Band Real-Time Visualizer Engine
+//! Uses 1024-point Real FFT with 4x Overlapping Windowing (256-sample hop) for ultra-fast,
+//! fluid 60FPS spectrum animation, psychoacoustic Bark-scale interpolation, and dynamic feature extraction.
 
 use std::sync::Arc;
 use realfft::{RealFftPlanner, RealToComplex};
 
-pub const FFT_SIZE: usize = 512;
+pub const FFT_SIZE: usize = 1024;
+pub const HOP_SIZE: usize = 256; // 4x overlap for buttery-smooth 60fps FFT response
 pub const NUM_SPECTRUM_BINS: usize = 32;
 
 #[derive(Debug, Clone, Default)]
 pub struct AudioFeatures {
     pub rms_db: f32,
     pub peak_db: f32,
+    pub peak_db_l: f32,
+    pub peak_db_r: f32,
     pub spectral_centroid: f32,    // Hz
     pub spectral_flux: f32,
     pub voice_probability: f32,    // 0.0 to 1.0
@@ -32,10 +35,11 @@ pub struct AiAdaptiveParameters {
 
 pub struct AiSpectralAnalyzer {
     sample_rate: f32,
-    fft_planner: RealFftPlanner<f32>,
+    _fft_planner: RealFftPlanner<f32>,
     fft: Arc<dyn RealToComplex<f32>>,
-    input_window: Vec<f32>,
-    window_idx: usize,
+    ring_buf: Vec<f32>,
+    ring_idx: usize,
+    samples_since_fft: usize,
     hann_window: Vec<f32>,
 
     // FFT scratch buffers
@@ -43,14 +47,14 @@ pub struct AiSpectralAnalyzer {
     fft_out: Vec<num_complex::Complex<f32>>,
     prev_magnitudes: Vec<f32>,
 
-    // Spectrum visualizer bins (smoothed dB levels for UI)
+    // Spectrum visualizer bins (smoothed normalized [0.0..1.0] for UI)
     pub visualizer_bins: [f32; NUM_SPECTRUM_BINS],
-    peak_hold_bins: [f32; NUM_SPECTRUM_BINS],
+    pub peak_hold_bins: [f32; NUM_SPECTRUM_BINS],
 
     // Latest analyzed features & AI adaptive parameters
     pub features: AudioFeatures,
     pub adaptive_params: AiAdaptiveParameters,
-    ai_enhancement_amount: f32, // 0.0 (disabled) to 1.0 (full AI boost)
+    ai_enhancement_amount: f32,
 }
 
 impl AiSpectralAnalyzer {
@@ -65,19 +69,32 @@ impl AiSpectralAnalyzer {
 
         Self {
             sample_rate,
-            fft_planner: planner,
+            _fft_planner: planner,
             fft,
-            input_window: vec![0.0; FFT_SIZE],
-            window_idx: 0,
+            ring_buf: vec![0.0; FFT_SIZE],
+            ring_idx: 0,
+            samples_since_fft: 0,
             hann_window,
             fft_in: vec![0.0; FFT_SIZE],
             fft_out: vec![num_complex::Complex::default(); FFT_SIZE / 2 + 1],
             prev_magnitudes: vec![0.0; FFT_SIZE / 2 + 1],
             visualizer_bins: [0.0; NUM_SPECTRUM_BINS],
             peak_hold_bins: [0.0; NUM_SPECTRUM_BINS],
-            features: AudioFeatures::default(),
+            features: AudioFeatures {
+                rms_db: -80.0,
+                peak_db: -80.0,
+                peak_db_l: -80.0,
+                peak_db_r: -80.0,
+                spectral_centroid: 1000.0,
+                spectral_flux: 0.0,
+                voice_probability: 0.0,
+                bass_energy: 0.0,
+                mid_energy: 0.0,
+                treble_energy: 0.0,
+                perceived_loudness_lufs: -83.0,
+            },
             adaptive_params: AiAdaptiveParameters::default(),
-            ai_enhancement_amount: 0.8,
+            ai_enhancement_amount: 0.85,
         }
     }
 
@@ -89,44 +106,59 @@ impl AiSpectralAnalyzer {
         self.ai_enhancement_amount = amount.clamp(0.0, 1.5);
     }
 
-    pub fn get_ai_enhancement_amount(&self) -> f32 {
-        self.ai_enhancement_amount
-    }
-
     /// Feed stereo audio sample to the AI analyzer
     #[inline]
     pub fn push_sample(&mut self, l: f32, r: f32) {
+        let abs_l = l.abs();
+        let abs_r = r.abs();
         let mono = (l + r) * 0.5;
-        self.input_window[self.window_idx] = mono;
-        self.window_idx += 1;
 
-        if self.window_idx >= FFT_SIZE {
-            self.window_idx = 0;
+        // Fast peak tracking
+        let cur_peak_l = (20.0 * (abs_l + 1e-5).log10()).clamp(-80.0, 6.0);
+        let cur_peak_r = (20.0 * (abs_r + 1e-5).log10()).clamp(-80.0, 6.0);
+
+        if cur_peak_l > self.features.peak_db_l {
+            self.features.peak_db_l = cur_peak_l;
+        } else {
+            self.features.peak_db_l = self.features.peak_db_l * 0.992 + cur_peak_l * 0.008;
+        }
+
+        if cur_peak_r > self.features.peak_db_r {
+            self.features.peak_db_r = cur_peak_r;
+        } else {
+            self.features.peak_db_r = self.features.peak_db_r * 0.992 + cur_peak_r * 0.008;
+        }
+
+        self.features.peak_db = self.features.peak_db_l.max(self.features.peak_db_r);
+
+        // Push to rolling ringbuffer
+        self.ring_buf[self.ring_idx] = mono;
+        self.ring_idx = (self.ring_idx + 1) % FFT_SIZE;
+        self.samples_since_fft += 1;
+
+        // Perform FFT every HOP_SIZE samples (4x overlapping windows for fluid motion)
+        if self.samples_since_fft >= HOP_SIZE {
+            self.samples_since_fft = 0;
             self.analyze_block();
         }
     }
 
     fn analyze_block(&mut self) {
-        // 1. Calculate RMS & Peak
+        // 1. Unroll ring buffer into continuous input window with Hann windowing
         let mut sum_sq = 0.0;
-        let mut peak = 0.0_f32;
-        for &s in &self.input_window {
-            let abs_s = s.abs();
-            if abs_s > peak {
-                peak = abs_s;
-            }
-            sum_sq += s * s;
+        for i in 0..FFT_SIZE {
+            let buf_pos = (self.ring_idx + i) % FFT_SIZE;
+            let sample = self.ring_buf[buf_pos];
+            sum_sq += sample * sample;
+            self.fft_in[i] = sample * self.hann_window[i];
         }
+
         let rms = (sum_sq / FFT_SIZE as f32).sqrt();
-        self.features.rms_db = (20.0 * (rms + 1e-5).log10()).clamp(-80.0, 6.0);
-        self.features.peak_db = (20.0 * (peak + 1e-5).log10()).clamp(-80.0, 6.0);
+        let target_rms_db = (20.0 * (rms + 1e-5).log10()).clamp(-80.0, 6.0);
+        self.features.rms_db = self.features.rms_db * 0.7 + target_rms_db * 0.3;
         self.features.perceived_loudness_lufs = self.features.rms_db - 3.0;
 
-        // 2. Apply Hann window & compute Forward Real FFT
-        for i in 0..FFT_SIZE {
-            self.fft_in[i] = self.input_window[i] * self.hann_window[i];
-        }
-
+        // 2. Compute Forward Real FFT
         let _ = self.fft.process(&mut self.fft_in, &mut self.fft_out);
 
         let num_bins = FFT_SIZE / 2 + 1;
@@ -141,9 +173,9 @@ impl AiSpectralAnalyzer {
         let mut vocal_sum = 0.0;
         let mut treble_sum = 0.0;
 
-        // 3. Extract Spectral Features
+        // 3. Extract Spectral Features & Flux
         for i in 0..num_bins {
-            let mag = self.fft_out[i].norm() / (FFT_SIZE as f32 * 0.5);
+            let mag = self.fft_out[i].norm() / (FFT_SIZE as f32 * 0.25);
             let freq = i as f32 * bin_hz;
 
             total_energy += mag;
@@ -182,46 +214,41 @@ impl AiSpectralAnalyzer {
         self.features.mid_energy = (mid_sum * inv_tot).clamp(0.0, 1.0);
         self.features.treble_energy = (treble_sum * inv_tot).clamp(0.0, 1.0);
 
-        // Vocal Presence Index (formant band ratio + harmonic consistency)
+        // Vocal Presence Index
         let vocal_ratio = (vocal_sum * inv_tot) * 2.2;
-        let is_voice_range = (centroid > 800.0 && centroid < 3200.0) as i32 as f32;
+        let is_voice_range = (centroid > 800.0 && centroid < 3400.0) as i32 as f32;
         self.features.voice_probability = (vocal_ratio * 0.6 + is_voice_range * 0.4).clamp(0.0, 1.0);
 
         // 4. AI Adaptive Parameter Modulation
         let ai = self.ai_enhancement_amount;
 
-        // Dynamic Dialogue / Vocal Clarity boost
-        if self.features.voice_probability > 0.45 {
-            self.adaptive_params.dynamic_eq_vocal_boost_db = (self.features.voice_probability * 2.8 * ai).clamp(0.0, 4.0);
+        if self.features.voice_probability > 0.40 {
+            self.adaptive_params.dynamic_eq_vocal_boost_db = (self.features.voice_probability * 3.2 * ai).clamp(0.0, 4.5);
         } else {
             self.adaptive_params.dynamic_eq_vocal_boost_db = 0.0;
         }
 
-        // Bass transient tightening (if bass is high energy, tighten bass to keep clarity)
-        if self.features.bass_energy > 0.35 {
-            self.adaptive_params.dynamic_eq_bass_tighten_db = (self.features.bass_energy * 2.0 * ai).clamp(0.0, 3.0);
-            self.adaptive_params.dynamic_bass_intensity_mod = 1.0 + (self.features.bass_energy * 0.4 * ai);
+        if self.features.bass_energy > 0.30 {
+            self.adaptive_params.dynamic_eq_bass_tighten_db = (self.features.bass_energy * 2.5 * ai).clamp(0.0, 3.5);
+            self.adaptive_params.dynamic_bass_intensity_mod = 1.0 + (self.features.bass_energy * 0.45 * ai);
         } else {
             self.adaptive_params.dynamic_eq_bass_tighten_db = 0.0;
             self.adaptive_params.dynamic_bass_intensity_mod = 1.0;
         }
 
-        // Dynamic Air Shimmer modulation
-        if self.features.treble_energy < 0.20 && self.features.rms_db > -45.0 {
-            // Brighten dark recordings automatically
-            self.adaptive_params.dynamic_exciter_air_mod = 1.0 + (0.45 * ai);
+        if self.features.treble_energy < 0.22 && self.features.rms_db > -55.0 {
+            self.adaptive_params.dynamic_exciter_air_mod = 1.0 + (0.5 * ai);
         } else {
             self.adaptive_params.dynamic_exciter_air_mod = 1.0;
         }
 
-        // Spatial immersion expansion when expansive sound is detected
-        if centroid > 1500.0 && self.features.spectral_flux > 0.1 {
-            self.adaptive_params.dynamic_spatial_width_mod = 1.0 + (0.25 * ai);
+        if centroid > 1400.0 && self.features.spectral_flux > 0.08 {
+            self.adaptive_params.dynamic_spatial_width_mod = 1.0 + (0.3 * ai);
         } else {
             self.adaptive_params.dynamic_spatial_width_mod = 1.0;
         }
 
-        // 5. Update Visualizer Bins (Logarithmic frequency mapping to 32 visualizer bars)
+        // 5. Update Visualizer Bins (Logarithmic frequency mapping from 25Hz to 20kHz)
         self.update_visualizer_bins();
     }
 
@@ -229,8 +256,8 @@ impl AiSpectralAnalyzer {
         let num_bins = FFT_SIZE / 2 + 1;
         let nyquist = self.sample_rate * 0.5;
 
-        // Logarithmic frequency bands from 20Hz to 20kHz
-        let min_freq = 20.0_f32;
+        // Exact ISO logarithmic frequency mapping (25Hz - 20000Hz)
+        let min_freq = 25.0_f32;
         let max_freq = nyquist.min(20000.0);
         let log_min = min_freq.ln();
         let log_max = max_freq.ln();
@@ -239,31 +266,39 @@ impl AiSpectralAnalyzer {
             let f_low = (log_min + (b as f32 / NUM_SPECTRUM_BINS as f32) * (log_max - log_min)).exp();
             let f_high = (log_min + ((b + 1) as f32 / NUM_SPECTRUM_BINS as f32) * (log_max - log_min)).exp();
 
-            let idx_low = ((f_low / nyquist) * num_bins as f32) as usize;
-            let idx_high = (((f_high / nyquist) * num_bins as f32) as usize).max(idx_low + 1).min(num_bins);
+            // Calculate fractional FFT bin bounds with continuous interpolation
+            let exact_low = (f_low / nyquist) * (num_bins as f32 - 1.0);
+            let exact_high = ((f_high / nyquist) * (num_bins as f32 - 1.0)).max(exact_low + 0.5);
+
+            let idx_low = (exact_low.floor() as usize).max(1).min(num_bins - 1);
+            let idx_high = (exact_high.ceil() as usize).max(idx_low + 1).min(num_bins);
 
             let mut band_energy = 0.0;
-            let count = (idx_high - idx_low).max(1);
+            let mut count = 0.0;
             for i in idx_low..idx_high {
                 band_energy += self.prev_magnitudes[i];
+                count += 1.0;
             }
-            let avg_energy = band_energy / count as f32;
+            let avg_mag = if count > 0.0 { band_energy / count } else { 0.0 };
 
-            // Convert to visualizer normalized scale (0.0 to 1.0)
-            let db = 20.0 * (avg_energy + 1e-5).log10();
-            let norm = ((db + 65.0) / 65.0).clamp(0.0, 1.0);
+            // Convert magnitude to realistic decibel scale
+            let db = 20.0 * (avg_mag + 1e-6).log10();
+            
+            // Perceptual dynamic visualizer curve: maps -52 dBFS..0 dBFS into 0.0..1.0 with punchy response
+            let norm = ((db + 52.0) / 52.0).clamp(0.0, 1.0).powf(0.85);
 
-            // Smooth decay
+            // Instant peak attack, smooth ballistic decay (studio standard)
             if norm > self.visualizer_bins[b] {
                 self.visualizer_bins[b] = norm; // Fast attack
             } else {
-                self.visualizer_bins[b] = self.visualizer_bins[b] * 0.78 + norm * 0.22; // Smooth release
+                self.visualizer_bins[b] = self.visualizer_bins[b] * 0.84 + norm * 0.16; // Smooth release
             }
 
-            if self.visualizer_bins[b] > self.peak_hold_bins[b] {
+            // Peak hold marker decay
+            if self.visualizer_bins[b] >= self.peak_hold_bins[b] {
                 self.peak_hold_bins[b] = self.visualizer_bins[b];
             } else {
-                self.peak_hold_bins[b] *= 0.94;
+                self.peak_hold_bins[b] = (self.peak_hold_bins[b] * 0.96).max(0.0);
             }
         }
     }

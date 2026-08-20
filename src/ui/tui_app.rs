@@ -18,6 +18,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Gauge, Paragraph};
 use ratatui::Terminal;
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,16 +32,19 @@ pub enum ActivePanel {
 #[derive(Clone)]
 struct UiSnapshot {
     visualizer_bins: [f32; NUM_SPECTRUM_BINS],
+    peak_hold_bins: [f32; NUM_SPECTRUM_BINS],
     features: AudioFeatures,
     adaptive_params: AiAdaptiveParameters,
     eq_gains: [f32; 10],
     config: PipelineConfig,
+    synth_active: bool,
 }
 
 pub struct TuiApp {
     pipeline: SharedPipeline,
     presets: PresetManager,
     config: AppConfig,
+    synth_enabled: Arc<AtomicBool>,
     active_panel: ActivePanel,
     selected_eq_band: usize,
     selected_enhancer: usize,
@@ -48,7 +53,7 @@ pub struct TuiApp {
 }
 
 impl TuiApp {
-    pub fn new(pipeline: SharedPipeline, config: AppConfig) -> Self {
+    pub fn new(pipeline: SharedPipeline, config: AppConfig, synth_enabled: Arc<AtomicBool>) -> Self {
         let mut presets = PresetManager::new();
         if let Some(idx) = presets.find_by_name(&config.active_preset) {
             presets.select(idx);
@@ -70,10 +75,11 @@ impl TuiApp {
             pipeline,
             presets,
             config,
+            synth_enabled,
             active_panel: ActivePanel::Presets,
             selected_eq_band: 0,
             selected_enhancer: 0,
-            status_message: "Ready. [P] Presets │ [E] Earphones │ [N] Environment │ [Space] Bypass".to_string(),
+            status_message: "Ready. [T] Engage Sound/Synth │ [P] Presets │ [E] Earphones │ [N] Environment".to_string(),
             _status_time: Instant::now(),
         }
     }
@@ -123,12 +129,15 @@ impl TuiApp {
         for i in 0..10 {
             eq_gains[i] = pl.eq.get_band_gain(i);
         }
+        let synth_active = self.synth_enabled.load(Ordering::Relaxed);
         UiSnapshot {
             visualizer_bins: pl.ai_analyzer.visualizer_bins,
+            peak_hold_bins: pl.ai_analyzer.peak_hold_bins,
             features: pl.ai_analyzer.features.clone(),
             adaptive_params: pl.ai_analyzer.adaptive_params.clone(),
             eq_gains,
             config: pl.config.clone(),
+            synth_active,
         }
     }
 
@@ -145,6 +154,15 @@ impl TuiApp {
                     ActivePanel::Equalizer => ActivePanel::Enhancers,
                     ActivePanel::Enhancers => ActivePanel::Presets,
                 };
+            }
+            KeyCode::Char('t') | KeyCode::Char('T') => {
+                let prev = self.synth_enabled.fetch_xor(true, Ordering::Relaxed);
+                let now_active = !prev;
+                if now_active {
+                    self.set_status("🎵 Audio Generator ENGAGED! Driving Real-Time 32-Band FFT & Dynamics");
+                } else {
+                    self.set_status("📥 Switched to System Loopback Audio (SonicAura Sink)");
+                }
             }
             KeyCode::Char('p') | KeyCode::Char('P') => {
                 self.presets.next();
@@ -380,10 +398,10 @@ impl TuiApp {
             Span::styled(" ○ BYPASS ", Style::default().fg(Color::White).bg(Color::DarkGray))
         };
 
-        let ai_badge = if snap.config.ai_boost_enabled {
-            Span::styled(" [AI: ON] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        let synth_badge = if snap.synth_active {
+            Span::styled(" [AUDIO GEN: ENGAGED] ", Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD))
         } else {
-            Span::styled(" [AI: OFF] ", Style::default().fg(Color::DarkGray))
+            Span::styled(" [AUDIO: SINK LOOPBACK] ", Style::default().fg(Color::Cyan))
         };
 
         let earphone_str = format!("🎧 {}", snap.config.earphone_type.name());
@@ -396,7 +414,7 @@ impl TuiApp {
             Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
             Span::styled(env_str, Style::default().fg(Color::LightGreen)),
             Span::styled(" │ ", Style::default().fg(Color::DarkGray)),
-            ai_badge,
+            synth_badge,
             Span::raw(" "),
             status_badge,
         ]);
@@ -460,15 +478,15 @@ impl TuiApp {
             .split(inner);
 
         // Render FFT bars
-        let spec_widget = SpectrumVisualizer::new(&snap.visualizer_bins, "");
+        let spec_widget = SpectrumVisualizer::new(&snap.visualizer_bins, &snap.peak_hold_bins, "");
         f.render_widget(spec_widget, split[0]);
 
         // Render VU meter
         let vu = VuMeter {
-            peak_db_l: snap.features.peak_db,
-            peak_db_r: snap.features.peak_db * 0.95,
-            _rms_db_l: snap.features.rms_db,
-            _rms_db_r: snap.features.rms_db * 0.95,
+            peak_db_l: snap.features.peak_db_l,
+            peak_db_r: snap.features.peak_db_r,
+            rms_db_l: snap.features.rms_db,
+            rms_db_r: snap.features.rms_db,
         };
         vu.render_meter(split[1], f.buffer_mut());
     }
@@ -640,8 +658,8 @@ impl TuiApp {
         let preset_name = self.presets.current().name.as_str();
 
         let help_text = Line::from(vec![
-            Span::styled(" [Tab] ", Style::default().fg(Color::Black).bg(Color::White)),
-            Span::raw(" Panel │ "),
+            Span::styled(" [T] ", Style::default().fg(Color::Black).bg(Color::Yellow)),
+            Span::styled(" Sound Output/Synth │ ", Style::default().fg(Color::Yellow)),
             Span::styled(" [P] ", Style::default().fg(Color::Black).bg(Color::White)),
             Span::styled(format!(" Preset ({}) │ ", preset_name), Style::default().fg(Color::Magenta)),
             Span::styled(" [E] ", Style::default().fg(Color::Black).bg(Color::White)),
@@ -650,8 +668,6 @@ impl TuiApp {
             Span::styled(" Environment │ ", Style::default().fg(Color::LightGreen)),
             Span::styled(" [Space] ", Style::default().fg(Color::Black).bg(Color::White)),
             Span::raw(" Bypass │ "),
-            Span::styled(" [S] ", Style::default().fg(Color::Black).bg(Color::White)),
-            Span::raw(" Save │ "),
             Span::styled(" [Q] ", Style::default().fg(Color::Black).bg(Color::White)),
             Span::raw(" Quit"),
         ]);

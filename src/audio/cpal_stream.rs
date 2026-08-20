@@ -1,4 +1,4 @@
-//! Real-Time Low-Latency CPAL Audio I/O Engine
+//! Real-Time Low-Latency CPAL Audio I/O Engine with Dynamic Synth Generator
 
 use crate::audio::test_synth::{SynthTone, TestSynth};
 use crate::dsp::pipeline::SharedPipeline;
@@ -7,7 +7,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Host, Stream, StreamConfig};
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::HeapRb;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
@@ -19,9 +19,7 @@ fn silence_alsa_logging() {
             _function: *const std::ffi::c_char,
             _err: std::ffi::c_int,
             _fmt: *const std::ffi::c_char,
-        ) {
-            // Intentionally suppress ALSA XRUN/underrun recovery notices from printing to stderr
-        }
+        ) {}
 
         let handle = libc::dlopen(b"libasound.so.2\0".as_ptr() as *const _, libc::RTLD_LAZY);
         if !handle.is_null() {
@@ -43,6 +41,7 @@ pub struct AudioEngine {
     pub output_device_name: String,
     pub sample_rate: u32,
     pub is_running: Arc<AtomicBool>,
+    pub synth_enabled: Arc<AtomicBool>,
     _input_stream: Option<Stream>,
     _output_stream: Option<Stream>,
 }
@@ -103,92 +102,52 @@ impl AudioEngine {
         }
 
         let is_running = Arc::new(AtomicBool::new(true));
+        let synth_enabled = Arc::new(AtomicBool::new(mode == EngineMode::TestSynth));
 
-        // Use 512 frame buffer size (10.6ms at 48kHz) or default
+        // Use 512 frame buffer size (10.6ms at 48kHz)
         let out_config = StreamConfig {
             channels: default_out_config.channels(),
             sample_rate,
             buffer_size: cpal::BufferSize::Fixed(512),
         };
 
+        // Ring buffer for bridging input stream to output stream (stereo samples: 16,384 capacity)
+        let ring_buffer = HeapRb::<f32>::new(16384);
+        let (mut producer, mut consumer) = ring_buffer.split();
+
+        // Initialize Internal Synth
+        let mut synth = TestSynth::new(sample_rate as f32);
+        synth.set_tone_type(synth_tone);
+
+        // Try setting up input stream
         let mut _input_stream_opt: Option<Stream> = None;
-        let input_device_name: String;
+        let mut input_device_name = "None".to_string();
 
-        match mode {
-            EngineMode::TestSynth => {
-                input_device_name = "Internal Test Synth (Binaural Demo)".to_string();
-                let mut synth = TestSynth::new(sample_rate as f32);
-                synth.set_tone_type(synth_tone);
+        let input_device_res = if let Some(ref name) = preferred_input {
+            host.input_devices()
+                .ok()
+                .and_then(|mut devs| devs.find(|d| d.name().map(|n| n == *name).unwrap_or(false)))
+                .or_else(|| host.default_input_device())
+        } else {
+            // Prefer SonicAura_Sink.monitor if available, else default input
+            host.input_devices()
+                .ok()
+                .and_then(|mut devs| devs.find(|d| d.name().map(|n| n.contains("SonicAura")).unwrap_or(false)))
+                .or_else(|| host.default_input_device())
+        };
 
-                let pl_clone = Arc::clone(&pipeline);
-                let err_fn = |_| {};
-
-                let output_stream = output_device.build_output_stream(
-                    &out_config,
-                    move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        if let Ok(mut pl) = pl_clone.lock() {
-                            for frame in data.chunks_exact_mut(out_channels) {
-                                let (syn_l, syn_r) = synth.next_sample();
-                                let (out_l, out_r) = pl.process_stereo_sample(syn_l, syn_r);
-                                frame[0] = out_l;
-                                if frame.len() > 1 {
-                                    frame[1] = out_r;
-                                }
-                                for extra in frame.iter_mut().skip(2) {
-                                    *extra = 0.0;
-                                }
-                            }
-                        } else {
-                            data.fill(0.0);
-                        }
-                    },
-                    err_fn,
-                    None,
-                )?;
-
-                output_stream.play()?;
-
-                Ok(Self {
-                    _host: host,
-                    input_device_name,
-                    output_device_name,
-                    sample_rate,
-                    is_running,
-                    _input_stream: None,
-                    _output_stream: Some(output_stream),
-                })
-            }
-            EngineMode::LoopbackLive => {
-                // Select Input Device
-                let input_device = if let Some(ref name) = preferred_input {
-                    host.input_devices()?
-                        .find(|d| d.name().map(|n| n == *name).unwrap_or(false))
-                        .or_else(|| host.default_input_device())
-                } else {
-                    host.default_input_device()
-                }
-                .context("No audio input device found on system")?;
-
-                input_device_name = input_device.name().unwrap_or_else(|_| "Default Input".to_string());
-
-                let default_in_config = input_device.default_input_config()?;
+        if let Some(input_device) = input_device_res {
+            input_device_name = input_device.name().unwrap_or_else(|_| "Default Input".to_string());
+            if let Ok(default_in_config) = input_device.default_input_config() {
                 let in_channels = default_in_config.channels() as usize;
-
                 let in_config = StreamConfig {
                     channels: default_in_config.channels(),
                     sample_rate,
                     buffer_size: cpal::BufferSize::Fixed(512),
                 };
 
-                // Ring buffer for bridging input stream to output stream (stereo samples: 16,384 capacity)
-                let ring_buffer = HeapRb::<f32>::new(16384);
-                let (mut producer, mut consumer) = ring_buffer.split();
-
                 let err_fn_in = |_| {};
-                let err_fn_out = |_| {};
-
-                // Input capture callback
-                let input_stream = input_device.build_input_stream(
+                if let Ok(input_stream) = input_device.build_input_stream(
                     &in_config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
                         for frame in data.chunks_exact(in_channels) {
@@ -200,69 +159,92 @@ impl AudioEngine {
                     },
                     err_fn_in,
                     None,
-                )?;
-
-                // Output playback callback with DSP processing & pre-buffering
-                let pl_clone = Arc::clone(&pipeline);
-                let mut prebuffer_ready = false;
-                let prebuffer_threshold = 512; // 256 stereo frames
-
-                let output_stream = output_device.build_output_stream(
-                    &out_config,
-                    move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        // Check if jitter buffer has warmed up
-                        if !prebuffer_ready {
-                            if consumer.occupied_len() >= prebuffer_threshold {
-                                prebuffer_ready = true;
-                            } else {
-                                data.fill(0.0);
-                                return;
-                            }
-                        }
-
-                        // Drift protection: if buffer is overfilled (>12000 samples), skip a few frames to keep latency crisp
-                        if consumer.occupied_len() > 12000 {
-                            for _ in 0..128 {
-                                let _ = consumer.try_pop();
-                            }
-                        }
-
-                        if let Ok(mut pl) = pl_clone.lock() {
-                            for frame in data.chunks_exact_mut(out_channels) {
-                                let in_l = consumer.try_pop().unwrap_or(0.0);
-                                let in_r = consumer.try_pop().unwrap_or(0.0);
-                                let (out_l, out_r) = pl.process_stereo_sample(in_l, in_r);
-                                frame[0] = out_l;
-                                if frame.len() > 1 {
-                                    frame[1] = out_r;
-                                }
-                                for extra in frame.iter_mut().skip(2) {
-                                    *extra = 0.0;
-                                }
-                            }
-                        } else {
-                            data.fill(0.0);
-                        }
-                    },
-                    err_fn_out,
-                    None,
-                )?;
-
-                input_stream.play()?;
-                output_stream.play()?;
-
-                _input_stream_opt = Some(input_stream);
-
-                Ok(Self {
-                    _host: host,
-                    input_device_name,
-                    output_device_name,
-                    sample_rate,
-                    is_running,
-                    _input_stream: _input_stream_opt,
-                    _output_stream: Some(output_stream),
-                })
+                ) {
+                    let _ = input_stream.play();
+                    _input_stream_opt = Some(input_stream);
+                }
             }
         }
+
+        // Output playback callback with DSP processing & pre-buffering
+        let pl_clone = Arc::clone(&pipeline);
+        let synth_flag = Arc::clone(&synth_enabled);
+        let mut prebuffer_ready = false;
+        let prebuffer_threshold = 512;
+
+        let err_fn_out = |_| {};
+        let output_stream = output_device.build_output_stream(
+            &out_config,
+            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                let is_synth = synth_flag.load(Ordering::Relaxed);
+
+                if is_synth {
+                    // Play synthesized spatial test audio through DSP pipeline
+                    if let Ok(mut pl) = pl_clone.lock() {
+                        for frame in data.chunks_exact_mut(out_channels) {
+                            let (syn_l, syn_r) = synth.next_sample();
+                            let (out_l, out_r) = pl.process_stereo_sample(syn_l, syn_r);
+                            frame[0] = out_l;
+                            if frame.len() > 1 {
+                                frame[1] = out_r;
+                            }
+                            for extra in frame.iter_mut().skip(2) {
+                                *extra = 0.0;
+                            }
+                        }
+                    } else {
+                        data.fill(0.0);
+                    }
+                } else {
+                    // Play live system loopback audio through DSP pipeline
+                    if !prebuffer_ready {
+                        if consumer.occupied_len() >= prebuffer_threshold {
+                            prebuffer_ready = true;
+                        } else {
+                            data.fill(0.0);
+                            return;
+                        }
+                    }
+
+                    if consumer.occupied_len() > 12000 {
+                        for _ in 0..128 {
+                            let _ = consumer.try_pop();
+                        }
+                    }
+
+                    if let Ok(mut pl) = pl_clone.lock() {
+                        for frame in data.chunks_exact_mut(out_channels) {
+                            let in_l = consumer.try_pop().unwrap_or(0.0);
+                            let in_r = consumer.try_pop().unwrap_or(0.0);
+                            let (out_l, out_r) = pl.process_stereo_sample(in_l, in_r);
+                            frame[0] = out_l;
+                            if frame.len() > 1 {
+                                frame[1] = out_r;
+                            }
+                            for extra in frame.iter_mut().skip(2) {
+                                *extra = 0.0;
+                            }
+                        }
+                    } else {
+                        data.fill(0.0);
+                    }
+                }
+            },
+            err_fn_out,
+            None,
+        )?;
+
+        output_stream.play()?;
+
+        Ok(Self {
+            _host: host,
+            input_device_name,
+            output_device_name,
+            sample_rate,
+            is_running,
+            synth_enabled,
+            _input_stream: _input_stream_opt,
+            _output_stream: Some(output_stream),
+        })
     }
 }

@@ -258,6 +258,7 @@ fn main() -> Result<()> {
 
     match _engine_result {
         Ok(engine) => {
+            let synth_flag = Arc::clone(&engine.synth_enabled);
             if args.daemon {
                 println!("⚡ SonicAura AI Daemon running in background...");
                 println!("  Input:       {}", engine.input_device_name);
@@ -270,14 +271,15 @@ fn main() -> Result<()> {
                     std::thread::sleep(std::time::Duration::from_secs(1));
                 }
             } else {
-                let mut app = TuiApp::new(pipeline, config);
+                let mut app = TuiApp::new(pipeline, config, synth_flag);
                 app.run()?;
             }
         }
         Err(e) => {
             eprintln!("⚠️ Audio device notice: {}", e);
             eprintln!("Launching in Interactive TUI Offline/Benchmarking mode...");
-            let mut app = TuiApp::new(pipeline, config);
+            let synth_flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
+            let mut app = TuiApp::new(pipeline, config, synth_flag);
             app.run()?;
         }
     }
