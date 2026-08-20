@@ -28,6 +28,37 @@ mod tests {
     }
 
     #[test]
+    fn test_declicked_smooth_bypass_crossfade() {
+        let mut pipeline = AudioPipeline::new(48000.0);
+
+        // Feed continuous 440Hz tone
+        let mut max_step_delta = 0.0_f32;
+        let mut prev_sample = 0.0_f32;
+
+        for i in 0..4800 {
+            let t = i as f32 / 48000.0;
+            let s = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.5;
+
+            // Toggle bypass at sample 1000 and sample 2500
+            if i == 1000 {
+                pipeline.config.enabled = false;
+            } else if i == 2500 {
+                pipeline.config.enabled = true;
+            }
+
+            let (out_l, _) = pipeline.process_stereo_sample(s, s);
+            let delta = (out_l - prev_sample).abs();
+            if i > 10 && delta > max_step_delta {
+                max_step_delta = delta;
+            }
+            prev_sample = out_l;
+        }
+
+        // Verify there is no sudden violent step discontinuity (Dirac click)
+        assert!(max_step_delta < 0.15, "Bypass produced a sudden pop/click step discontinuity: {}", max_step_delta);
+    }
+
+    #[test]
     fn test_psychoacoustic_bass_generation() {
         let mut bass = PsychoacousticBass::new(48000.0);
         bass.set_intensity(1.0);

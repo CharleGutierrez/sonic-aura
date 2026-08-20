@@ -1,8 +1,10 @@
 //! Master Audio Processing Engine Pipeline
 //! Unifies EQ, AI Analysis, Earphone Calibration, Environmental Adaptation,
 //! Psychoacoustic Bass, Harmonic Excitation, 3D Spatializer, Multiband Compressor, and True-Peak Limiter.
+//! Features Time-Aligned De-Clicking Crossfade and 18Hz Infrasonic DC/Rumble Blocking.
 
 use crate::dsp::ai_analyzer::AiSpectralAnalyzer;
+use crate::dsp::biquad::{Biquad, FilterType};
 use crate::dsp::compressor::MultibandCompressor;
 use crate::dsp::earphone_profiler::EarphoneType;
 use crate::dsp::environment_adapter::EnvironmentMode;
@@ -71,11 +73,33 @@ pub struct AudioPipeline {
     pub limiter: Limiter,
     pub ai_analyzer: AiSpectralAnalyzer,
     pub user_eq_gains: [f32; 10],
+
+    // Infrasonic DC / Sub-sonic Rumble Filter (18Hz HPF) to eliminate speaker flutter/thump
+    dc_blocker_l: Biquad,
+    dc_blocker_r: Biquad,
+
+    // Time-aligned delay buffer for clickless bypass crossfading (matches limiter lookahead)
+    dry_delay_l: Vec<f32>,
+    dry_delay_r: Vec<f32>,
+    dry_delay_idx: usize,
+    dry_delay_len: usize,
+
+    // Smooth de-clicking crossfade gain for [Space] bypass toggle (0.0 = bypass, 1.0 = active)
+    current_fade: f32,
+    fade_step: f32,
 }
 
 impl AudioPipeline {
     pub fn new(sample_rate: f32) -> Self {
         let config = PipelineConfig::default();
+        let dc_blocker_l = Biquad::new(FilterType::HighPass, 18.0, 0.707, 0.0, sample_rate);
+        let dc_blocker_r = Biquad::new(FilterType::HighPass, 18.0, 0.707, 0.0, sample_rate);
+
+        // 1.5ms lookahead match
+        let lookahead_samples = ((1.5 * 0.001 * sample_rate) as usize).max(4);
+        let fade_samples = (0.015 * sample_rate).max(64.0); // 15ms smooth crossfade
+        let fade_step = 1.0 / fade_samples;
+
         let mut pipeline = Self {
             sample_rate,
             config: config.clone(),
@@ -88,6 +112,14 @@ impl AudioPipeline {
             limiter: Limiter::new(sample_rate, 1.5, -0.1, 50.0),
             ai_analyzer: AiSpectralAnalyzer::new(sample_rate),
             user_eq_gains: [0.0; 10],
+            dc_blocker_l,
+            dc_blocker_r,
+            dry_delay_l: vec![0.0; lookahead_samples],
+            dry_delay_r: vec![0.0; lookahead_samples],
+            dry_delay_idx: 0,
+            dry_delay_len: lookahead_samples,
+            current_fade: 1.0,
+            fade_step,
         };
         pipeline.apply_config(&config);
         pipeline
@@ -103,6 +135,17 @@ impl AudioPipeline {
         self.compressor.set_sample_rate(sample_rate);
         self.limiter.set_sample_rate(sample_rate);
         self.ai_analyzer.set_sample_rate(sample_rate);
+        self.dc_blocker_l = Biquad::new(FilterType::HighPass, 18.0, 0.707, 0.0, sample_rate);
+        self.dc_blocker_r = Biquad::new(FilterType::HighPass, 18.0, 0.707, 0.0, sample_rate);
+
+        let lookahead_samples = ((1.5 * 0.001 * sample_rate) as usize).max(4);
+        self.dry_delay_len = lookahead_samples;
+        self.dry_delay_l.resize(lookahead_samples, 0.0);
+        self.dry_delay_r.resize(lookahead_samples, 0.0);
+        self.dry_delay_idx = 0;
+
+        let fade_samples = (0.015 * sample_rate).max(64.0);
+        self.fade_step = 1.0 / fade_samples;
     }
 
     pub fn set_user_eq_gain(&mut self, band_idx: usize, gain_db: f32) {
@@ -169,11 +212,27 @@ impl AudioPipeline {
     }
 
     #[inline(always)]
-    pub fn process_stereo_sample(&mut self, in_l: f32, in_r: f32) -> (f32, f32) {
-        if !self.config.enabled {
-            self.ai_analyzer.push_sample(in_l, in_r);
-            return (in_l, in_r);
+    pub fn process_stereo_sample(&mut self, raw_in_l: f32, raw_in_r: f32) -> (f32, f32) {
+        // Strip inaudible sub-sonic DC offset / flutter rumble
+        let in_l = self.dc_blocker_l.process(raw_in_l);
+        let in_r = self.dc_blocker_r.process(raw_in_r);
+
+        // Maintain time-aligned dry delay line to match limiter lookahead
+        let dry_l = self.dry_delay_l[self.dry_delay_idx];
+        let dry_r = self.dry_delay_r[self.dry_delay_idx];
+        self.dry_delay_l[self.dry_delay_idx] = in_l;
+        self.dry_delay_r[self.dry_delay_idx] = in_r;
+        self.dry_delay_idx = (self.dry_delay_idx + 1) % self.dry_delay_len;
+
+        // Smooth de-clicking crossfade ramp for [Space] bypass toggle
+        let target_fade = if self.config.enabled { 1.0 } else { 0.0 };
+        if self.current_fade < target_fade {
+            self.current_fade = (self.current_fade + self.fade_step).min(1.0);
+        } else if self.current_fade > target_fade {
+            self.current_fade = (self.current_fade - self.fade_step).max(0.0);
         }
+
+        let fade = self.current_fade;
 
         // Apply Master Input / Output Preamp
         let master_gain = 10.0_f32.powf(self.config.master_gain_db / 20.0);
@@ -223,9 +282,13 @@ impl AudioPipeline {
         let (comp_l, comp_r) = self.compressor.process(spat_l, spat_r);
 
         // 7. True-Peak Lookahead Brickwall Limiter & Soft Clipper
-        let (out_l, out_r) = self.limiter.process(comp_l, comp_r);
+        let (dsp_out_l, dsp_out_r) = self.limiter.process(comp_l, comp_r);
 
-        // 8. Push sample into AI analyzer for real-time spectral metrics & visualizer
+        // 8. Equal-Power Time-Aligned Clickless Crossfade between dry input and processed DSP output
+        let out_l = dry_l * (1.0 - fade) + dsp_out_l * fade;
+        let out_r = dry_r * (1.0 - fade) + dsp_out_r * fade;
+
+        // 9. Push sample into AI analyzer for real-time spectral metrics & visualizer
         self.ai_analyzer.push_sample(out_l, out_r);
 
         (out_l, out_r)
@@ -239,6 +302,10 @@ impl AudioPipeline {
         self.spatializer.reset();
         self.compressor.reset();
         self.limiter.reset();
+        self.dc_blocker_l.reset();
+        self.dc_blocker_r.reset();
+        self.dry_delay_l.fill(0.0);
+        self.dry_delay_r.fill(0.0);
     }
 }
 
