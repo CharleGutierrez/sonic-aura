@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+*.swp
+*.bak
+*.tmp
+*.wav
+Cargo.lock
+.DS_Store
