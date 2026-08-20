@@ -1,6 +1,7 @@
-//! Real-Time Low-Latency CPAL Audio I/O Engine with Dynamic Synth Generator
+//! Real-Time Low-Latency CPAL Audio I/O Engine with Automatic System Audio Routing
 
 use crate::audio::test_synth::{SynthTone, TestSynth};
+use crate::audio::virtual_device::VirtualSinkManager;
 use crate::dsp::pipeline::SharedPipeline;
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -42,6 +43,8 @@ pub struct AudioEngine {
     pub sample_rate: u32,
     pub is_running: Arc<AtomicBool>,
     pub synth_enabled: Arc<AtomicBool>,
+    pub original_sink: Option<String>,
+    pub original_source: Option<String>,
     _input_stream: Option<Stream>,
     _output_stream: Option<Stream>,
 }
@@ -76,15 +79,29 @@ impl AudioEngine {
         // Silence ALSA C-library underrun stderr warnings so terminal TUI remains pristine
         silence_alsa_logging();
 
+        // Automatically setup PipeWire/PulseAudio virtual sink routing for YouTube / system sound
+        let (original_sink, original_source) = if mode == EngineMode::LoopbackLive {
+            VirtualSinkManager::auto_route_system_audio()
+        } else {
+            (None, None)
+        };
+
         let host = cpal::default_host();
 
-        // 1. Select Output Device
+        // 1. Select Physical Output Device (avoid SonicAura_Sink to prevent feedback)
         let output_device = if let Some(ref name) = preferred_output {
             host.output_devices()?
                 .find(|d| d.name().map(|n| n == *name).unwrap_or(false))
                 .or_else(|| host.default_output_device())
         } else {
-            host.default_output_device()
+            // Find a hardware output device that is not SonicAura_Sink
+            host.output_devices()?
+                .find(|d| {
+                    d.name()
+                        .map(|n| !n.contains("SonicAura") && (n.contains("analog") || n.contains("default") || n.contains("sysdefault") || n.contains("front")))
+                        .unwrap_or(false)
+                })
+                .or_else(|| host.default_output_device())
         }
         .context("No audio output device found on system")?;
 
@@ -129,10 +146,10 @@ impl AudioEngine {
                 .and_then(|mut devs| devs.find(|d| d.name().map(|n| n == *name).unwrap_or(false)))
                 .or_else(|| host.default_input_device())
         } else {
-            // Prefer SonicAura_Sink.monitor if available, else default input
+            // Prefer SonicAura_Sink.monitor or system monitor source
             host.input_devices()
                 .ok()
-                .and_then(|mut devs| devs.find(|d| d.name().map(|n| n.contains("SonicAura")).unwrap_or(false)))
+                .and_then(|mut devs| devs.find(|d| d.name().map(|n| n.contains("SonicAura") || n.contains("monitor")).unwrap_or(false)))
                 .or_else(|| host.default_input_device())
         };
 
@@ -196,7 +213,7 @@ impl AudioEngine {
                         data.fill(0.0);
                     }
                 } else {
-                    // Play live system loopback audio through DSP pipeline
+                    // Play live YouTube / system loopback audio through DSP pipeline
                     if !prebuffer_ready {
                         if consumer.occupied_len() >= prebuffer_threshold {
                             prebuffer_ready = true;
@@ -243,8 +260,19 @@ impl AudioEngine {
             sample_rate,
             is_running,
             synth_enabled,
+            original_sink,
+            original_source,
             _input_stream: _input_stream_opt,
             _output_stream: Some(output_stream),
         })
+    }
+}
+
+impl Drop for AudioEngine {
+    fn drop(&mut self) {
+        VirtualSinkManager::cleanup_and_restore(
+            self.original_sink.as_deref(),
+            self.original_source.as_deref(),
+        );
     }
 }
