@@ -219,6 +219,67 @@ which pactl pw-record pw-link parec
 
 ---
 
+## 🪟 Windows 11 & WSL2 Compatibility
+
+### Overview & Comparison
+
+| Feature | Inside WSL2 (Windows 11) | Native Windows 11 (PowerShell) |
+|---|:---:|:---:|
+| **TUI Interface & Themes** | ✅ Works | ✅ Works (best in Windows Terminal) |
+| **Binaural Demo Synth (`--demo`)** | ✅ Plays to Windows speakers | ✅ Plays to Windows speakers |
+| **Offline WAV Processing** | ✅ Full support | ✅ Full support |
+| **Tinnitus Therapy Studio** | ✅ Full support | ✅ Full support |
+| **Enhance Windows Apps (YouTube/Spotify)** | ❌ VM boundary blocks Windows host audio | ✅ Full system audio access via WASAPI |
+| **Audio Latency** | Minor VM overhead (~10–20ms) | Native ultra-low latency (< 1ms) |
+
+---
+
+### Running inside WSL2 (Linux on Windows)
+
+Windows 11 includes **WSLg** (WSL GUI & Audio architecture), providing an automatic PulseAudio bridge (`/mnt/wslg/PulseServer`) connected to your Windows speakers.
+
+- **✅ Supported in WSL2**:
+  - Running `sonic_aura --demo` (built-in binaural synthesizer plays through Windows speakers).
+  - Offline file processing (`sonic_aura -i song.wav -o enhanced.wav`).
+  - Enhancing audio from **Linux applications running inside WSL** (e.g. Linux media players or Linux browsers).
+- **⚠️ WSL2 Limitation**:
+  - A program running inside the WSL2 virtual machine **cannot intercept or enhance audio playing on Windows 11 host applications** (such as Windows Chrome, Windows Spotify, Discord, or PC games). Windows 11 routes audio *out* of WSL, but does not pipe the host desktop mix *into* the WSL VM.
+
+---
+
+### 🌟 Recommended: Run Natively on Windows 11
+
+Because SonicAura is built with cross-platform Rust crates (`cpal`, `ratatui`, `crossterm`), you can compile and run it **natively on Windows 11 without WSL** for direct WASAPI hardware access with zero VM overhead.
+
+#### Quick Setup:
+
+1. **Install Rust for Windows**:
+   - Download and run [rustup-init.exe](https://rustup.rs/) (select default MSVC toolchain).
+   - If prompted, install C++ Build Tools via the Visual Studio Installer.
+
+2. **Clone and Build in PowerShell**:
+   ```powershell
+   git clone https://github.com/CharleGutierrez/sonic-aura.git
+   cd sonic-aura
+   cargo build --release
+   ```
+
+3. **Run in Windows Terminal**:
+   ```powershell
+   # Interactive TUI:
+   .\target\release\sonic_aura.exe
+
+   # With Tinnitus Relief active at 6,000 Hz:
+   .\target\release\sonic_aura.exe --tinnitus-mode notch --tinnitus-freq 6000
+
+   # Audition demo synth:
+   .\target\release\sonic_aura.exe --demo
+   ```
+
+*(Tip: Run inside **Windows Terminal** for full 24-bit TrueColor support, unicode icons, and modern ANSI rendering).*
+
+---
+
 ## 📄 License
 MIT License
 
