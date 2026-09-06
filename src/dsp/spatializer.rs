@@ -18,9 +18,9 @@ pub enum SpatialMode {
 pub struct Spatializer {
     sample_rate: f32,
     mode: SpatialMode,
-    width: f32,         // Stereo width (0.0 = Mono, 1.0 = Normal, 1.8 = Super-wide)
-    depth: f32,         // 3D Depth / early reflection ambience mix (0.0 to 1.0)
-    crossfeed: f32,     // HRTF crossfeed amount (0.0 = off, 1.0 = full natural acoustic)
+    width: f32,     // Stereo width (0.0 = Mono, 1.0 = Normal, 1.8 = Super-wide)
+    depth: f32,     // 3D Depth / early reflection ambience mix (0.0 to 1.0)
+    crossfeed: f32, // HRTF crossfeed amount (0.0 = off, 1.0 = full natural acoustic)
 
     // Mid/Side frequency filters: keep sub-bass mono, widen mids/highs
     side_hpf: Biquad,
@@ -49,7 +49,7 @@ pub struct Spatializer {
 impl Spatializer {
     pub fn new(sample_rate: f32) -> Self {
         let max_cross_delay = (sample_rate * 0.001) as usize + 8; // 1ms max
-        let max_amb_delay = (sample_rate * 0.060) as usize + 8;  // 60ms max
+        let max_amb_delay = (sample_rate * 0.060) as usize + 8; // 60ms max
 
         let mut instance = Self {
             sample_rate,
@@ -205,8 +205,12 @@ impl Spatializer {
             let r3_l = self.read_amb_l(tap3);
             let r4_r = self.read_amb_r(tap4);
 
-            let early_l = self.allpass_l.process(r1_l * 0.4 + r3_l * 0.25 - r2_r * 0.15);
-            let early_r = self.allpass_r.process(r2_r * 0.4 + r4_r * 0.25 - r1_l * 0.15);
+            let early_l = self
+                .allpass_l
+                .process(r1_l * 0.4 + r3_l * 0.25 - r2_r * 0.15);
+            let early_r = self
+                .allpass_r
+                .process(r2_r * 0.4 + r4_r * 0.25 - r1_l * 0.15);
 
             self.ambience_idx_l = (self.ambience_idx_l + 1) % buf_len;
             self.ambience_idx_r = (self.ambience_idx_r + 1) % buf_len;

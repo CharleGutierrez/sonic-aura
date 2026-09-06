@@ -15,7 +15,14 @@ struct CompressorBand {
 }
 
 impl CompressorBand {
-    fn new(threshold_db: f32, ratio: f32, attack_ms: f32, release_ms: f32, makeup_db: f32, sample_rate: f32) -> Self {
+    fn new(
+        threshold_db: f32,
+        ratio: f32,
+        attack_ms: f32,
+        release_ms: f32,
+        makeup_db: f32,
+        sample_rate: f32,
+    ) -> Self {
         let attack_coeff = (-1.0 / (attack_ms * 0.001 * sample_rate)).exp();
         let release_coeff = (-1.0 / (release_ms * 0.001 * sample_rate)).exp();
         let makeup_linear = 10.0_f32.powf(makeup_db / 20.0);
@@ -72,8 +79,8 @@ impl CompressorBand {
 pub struct MultibandCompressor {
     sample_rate: f32,
     enabled: bool,
-    intensity: f32,       // 0.0 (off) to 1.0 (full studio compression)
-    dynamic_loudness: f32,// Fletcher-Munson loudness compensation (0.0 to 1.0)
+    intensity: f32,        // 0.0 (off) to 1.0 (full studio compression)
+    dynamic_loudness: f32, // Fletcher-Munson loudness compensation (0.0 to 1.0)
 
     // Crossover filters (Linkwitz-Riley 24dB/oct simulation via 2-pole cascaded biquads)
     low_lpf_l: Biquad,
@@ -180,20 +187,80 @@ impl MultibandCompressor {
 
         self.low_lpf_l = Biquad::new(FilterType::LowPass, low_cross, 0.707, 0.0, self.sample_rate);
         self.low_lpf_r = Biquad::new(FilterType::LowPass, low_cross, 0.707, 0.0, self.sample_rate);
-        self.low_hpf_l = Biquad::new(FilterType::HighPass, low_cross, 0.707, 0.0, self.sample_rate);
-        self.low_hpf_r = Biquad::new(FilterType::HighPass, low_cross, 0.707, 0.0, self.sample_rate);
+        self.low_hpf_l = Biquad::new(
+            FilterType::HighPass,
+            low_cross,
+            0.707,
+            0.0,
+            self.sample_rate,
+        );
+        self.low_hpf_r = Biquad::new(
+            FilterType::HighPass,
+            low_cross,
+            0.707,
+            0.0,
+            self.sample_rate,
+        );
 
-        self.high_lpf_l = Biquad::new(FilterType::LowPass, high_cross, 0.707, 0.0, self.sample_rate);
-        self.high_lpf_r = Biquad::new(FilterType::LowPass, high_cross, 0.707, 0.0, self.sample_rate);
-        self.high_hpf_l = Biquad::new(FilterType::HighPass, high_cross, 0.707, 0.0, self.sample_rate);
-        self.high_hpf_r = Biquad::new(FilterType::HighPass, high_cross, 0.707, 0.0, self.sample_rate);
+        self.high_lpf_l = Biquad::new(
+            FilterType::LowPass,
+            high_cross,
+            0.707,
+            0.0,
+            self.sample_rate,
+        );
+        self.high_lpf_r = Biquad::new(
+            FilterType::LowPass,
+            high_cross,
+            0.707,
+            0.0,
+            self.sample_rate,
+        );
+        self.high_hpf_l = Biquad::new(
+            FilterType::HighPass,
+            high_cross,
+            0.707,
+            0.0,
+            self.sample_rate,
+        );
+        self.high_hpf_r = Biquad::new(
+            FilterType::HighPass,
+            high_cross,
+            0.707,
+            0.0,
+            self.sample_rate,
+        );
 
         let bass_gain = self.dynamic_loudness * 4.5;
         let treble_gain = self.dynamic_loudness * 3.5;
-        self.loudness_bass_l = Biquad::new(FilterType::LowShelf, 90.0, 0.707, bass_gain, self.sample_rate);
-        self.loudness_bass_r = Biquad::new(FilterType::LowShelf, 90.0, 0.707, bass_gain, self.sample_rate);
-        self.loudness_treble_l = Biquad::new(FilterType::HighShelf, 9000.0, 0.707, treble_gain, self.sample_rate);
-        self.loudness_treble_r = Biquad::new(FilterType::HighShelf, 9000.0, 0.707, treble_gain, self.sample_rate);
+        self.loudness_bass_l = Biquad::new(
+            FilterType::LowShelf,
+            90.0,
+            0.707,
+            bass_gain,
+            self.sample_rate,
+        );
+        self.loudness_bass_r = Biquad::new(
+            FilterType::LowShelf,
+            90.0,
+            0.707,
+            bass_gain,
+            self.sample_rate,
+        );
+        self.loudness_treble_l = Biquad::new(
+            FilterType::HighShelf,
+            9000.0,
+            0.707,
+            treble_gain,
+            self.sample_rate,
+        );
+        self.loudness_treble_r = Biquad::new(
+            FilterType::HighShelf,
+            9000.0,
+            0.707,
+            treble_gain,
+            self.sample_rate,
+        );
     }
 
     #[inline(always)]
@@ -233,8 +300,12 @@ impl MultibandCompressor {
         let blend_r = in_r * (1.0 - self.intensity) + comp_out_r * self.intensity;
 
         // 4. Dynamic Loudness Curve (Fletcher-Munson)
-        let out_l = self.loudness_treble_l.process(self.loudness_bass_l.process(blend_l));
-        let out_r = self.loudness_treble_r.process(self.loudness_bass_r.process(blend_r));
+        let out_l = self
+            .loudness_treble_l
+            .process(self.loudness_bass_l.process(blend_l));
+        let out_r = self
+            .loudness_treble_r
+            .process(self.loudness_bass_r.process(blend_r));
 
         (out_l, out_r)
     }

@@ -78,7 +78,8 @@ impl Limiter {
         if target_gain < self.current_gain {
             self.current_gain = target_gain; // Instant attack
         } else {
-            self.current_gain = (1.0 - self.release_coeff) * target_gain + self.release_coeff * self.current_gain;
+            self.current_gain =
+                (1.0 - self.release_coeff) * target_gain + self.release_coeff * self.current_gain;
         }
 
         self.gain_reduction = self.current_gain;
@@ -106,9 +107,9 @@ impl Limiter {
 fn soft_clip(x: f32, ceiling: f32) -> f32 {
     let limit = ceiling * 0.95;
     if x > limit {
-        limit + (ceiling - limit) * (1.0 - (- (x - limit) / (ceiling - limit)).exp())
+        limit + (ceiling - limit) * (1.0 - (-(x - limit) / (ceiling - limit)).exp())
     } else if x < -limit {
-        -limit - (ceiling - limit) * (1.0 - (- (-x - limit) / (ceiling - limit)).exp())
+        -limit - (ceiling - limit) * (1.0 - (-(-x - limit) / (ceiling - limit)).exp())
     } else {
         x
     }

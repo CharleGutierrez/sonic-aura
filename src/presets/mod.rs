@@ -1,6 +1,6 @@
 pub mod default_presets;
 
-use crate::presets::default_presets::{get_default_presets, Preset};
+use crate::presets::default_presets::{Preset, get_default_presets};
 use std::fs;
 use std::path::PathBuf;
 
@@ -42,7 +42,9 @@ impl PresetManager {
 
     pub fn find_by_name(&self, name: &str) -> Option<usize> {
         let name_lower = name.to_lowercase();
-        self.presets.iter().position(|p| p.name.to_lowercase().contains(&name_lower))
+        self.presets
+            .iter()
+            .position(|p| p.name.to_lowercase().contains(&name_lower))
     }
 
     pub fn load_user_presets(&mut self, user_presets_path: &PathBuf) {

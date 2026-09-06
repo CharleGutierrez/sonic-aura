@@ -2,8 +2,8 @@
 //! Uses 1024-point Real FFT with 4x Overlapping Windowing (256-sample hop) for ultra-fast,
 //! fluid 60FPS spectrum animation, psychoacoustic Bark-scale interpolation, and dynamic feature extraction.
 
-use std::sync::Arc;
 use realfft::{RealFftPlanner, RealToComplex};
+use std::sync::Arc;
 
 pub const FFT_SIZE: usize = 1024;
 pub const HOP_SIZE: usize = 256; // 4x overlap for buttery-smooth 60fps FFT response
@@ -15,12 +15,12 @@ pub struct AudioFeatures {
     pub peak_db: f32,
     pub peak_db_l: f32,
     pub peak_db_r: f32,
-    pub spectral_centroid: f32,    // Hz
+    pub spectral_centroid: f32, // Hz
     pub spectral_flux: f32,
-    pub voice_probability: f32,    // 0.0 to 1.0
-    pub bass_energy: f32,          // 0.0 to 1.0
-    pub mid_energy: f32,           // 0.0 to 1.0
-    pub treble_energy: f32,        // 0.0 to 1.0
+    pub voice_probability: f32, // 0.0 to 1.0
+    pub bass_energy: f32,       // 0.0 to 1.0
+    pub mid_energy: f32,        // 0.0 to 1.0
+    pub treble_energy: f32,     // 0.0 to 1.0
     pub perceived_loudness_lufs: f32,
 }
 
@@ -64,7 +64,8 @@ impl AiSpectralAnalyzer {
 
         let mut hann_window = vec![0.0; FFT_SIZE];
         for (i, w) in hann_window.iter_mut().enumerate() {
-            *w = 0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (FFT_SIZE as f32 - 1.0)).cos());
+            *w = 0.5
+                * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (FFT_SIZE as f32 - 1.0)).cos());
         }
 
         Self {
@@ -217,20 +218,24 @@ impl AiSpectralAnalyzer {
         // Vocal Presence Index
         let vocal_ratio = (vocal_sum * inv_tot) * 2.2;
         let is_voice_range = (centroid > 800.0 && centroid < 3400.0) as i32 as f32;
-        self.features.voice_probability = (vocal_ratio * 0.6 + is_voice_range * 0.4).clamp(0.0, 1.0);
+        self.features.voice_probability =
+            (vocal_ratio * 0.6 + is_voice_range * 0.4).clamp(0.0, 1.0);
 
         // 4. AI Adaptive Parameter Modulation
         let ai = self.ai_enhancement_amount;
 
         if self.features.voice_probability > 0.40 {
-            self.adaptive_params.dynamic_eq_vocal_boost_db = (self.features.voice_probability * 3.2 * ai).clamp(0.0, 4.5);
+            self.adaptive_params.dynamic_eq_vocal_boost_db =
+                (self.features.voice_probability * 3.2 * ai).clamp(0.0, 4.5);
         } else {
             self.adaptive_params.dynamic_eq_vocal_boost_db = 0.0;
         }
 
         if self.features.bass_energy > 0.30 {
-            self.adaptive_params.dynamic_eq_bass_tighten_db = (self.features.bass_energy * 2.5 * ai).clamp(0.0, 3.5);
-            self.adaptive_params.dynamic_bass_intensity_mod = 1.0 + (self.features.bass_energy * 0.45 * ai);
+            self.adaptive_params.dynamic_eq_bass_tighten_db =
+                (self.features.bass_energy * 2.5 * ai).clamp(0.0, 3.5);
+            self.adaptive_params.dynamic_bass_intensity_mod =
+                1.0 + (self.features.bass_energy * 0.45 * ai);
         } else {
             self.adaptive_params.dynamic_eq_bass_tighten_db = 0.0;
             self.adaptive_params.dynamic_bass_intensity_mod = 1.0;
@@ -263,8 +268,10 @@ impl AiSpectralAnalyzer {
         let log_max = max_freq.ln();
 
         for b in 0..NUM_SPECTRUM_BINS {
-            let f_low = (log_min + (b as f32 / NUM_SPECTRUM_BINS as f32) * (log_max - log_min)).exp();
-            let f_high = (log_min + ((b + 1) as f32 / NUM_SPECTRUM_BINS as f32) * (log_max - log_min)).exp();
+            let f_low =
+                (log_min + (b as f32 / NUM_SPECTRUM_BINS as f32) * (log_max - log_min)).exp();
+            let f_high =
+                (log_min + ((b + 1) as f32 / NUM_SPECTRUM_BINS as f32) * (log_max - log_min)).exp();
 
             // Calculate fractional FFT bin bounds with continuous interpolation
             let exact_low = (f_low / nyquist) * (num_bins as f32 - 1.0);
@@ -279,11 +286,15 @@ impl AiSpectralAnalyzer {
                 band_energy += self.prev_magnitudes[i];
                 count += 1.0;
             }
-            let avg_mag = if count > 0.0 { band_energy / count } else { 0.0 };
+            let avg_mag = if count > 0.0 {
+                band_energy / count
+            } else {
+                0.0
+            };
 
             // Convert magnitude to realistic decibel scale
             let db = 20.0 * (avg_mag + 1e-6).log10();
-            
+
             // Perceptual dynamic visualizer curve: maps -52 dBFS..0 dBFS into 0.0..1.0 with punchy response
             let norm = ((db + 52.0) / 52.0).clamp(0.0, 1.0).powf(0.85);
 

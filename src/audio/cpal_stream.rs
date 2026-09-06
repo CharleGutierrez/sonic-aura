@@ -7,10 +7,10 @@ use crate::dsp::pipeline::SharedPipeline;
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Host, Stream, StreamConfig};
-use ringbuf::traits::{Consumer, Observer, Producer, Split};
-use ringbuf::HeapRb;
-use std::sync::atomic::{AtomicBool, Ordering};
+use ringbuf::traits::{Consumer, Observer};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
 
 #[cfg(target_os = "linux")]
 fn silence_alsa_logging() {
@@ -21,13 +21,15 @@ fn silence_alsa_logging() {
             _function: *const std::ffi::c_char,
             _err: std::ffi::c_int,
             _fmt: *const std::ffi::c_char,
-        ) {}
+        ) {
+        }
 
         let handle = libc::dlopen(b"libasound.so.2\0".as_ptr() as *const _, libc::RTLD_LAZY);
         if !handle.is_null() {
             let symbol = libc::dlsym(handle, b"snd_lib_error_set_handler\0".as_ptr() as *const _);
             if !symbol.is_null() {
-                let set_handler: extern "C" fn(*const ()) -> std::ffi::c_int = std::mem::transmute(symbol);
+                let set_handler: extern "C" fn(*const ()) -> std::ffi::c_int =
+                    std::mem::transmute(symbol);
                 set_handler(dummy_handler as *const ());
             }
         }
@@ -74,6 +76,7 @@ impl AudioEngine {
         preferred_input: Option<String>,
         preferred_output: Option<String>,
         synth_tone: SynthTone,
+        mut consumer: ringbuf::HeapCons<f32>,
     ) -> Result<Self> {
         silence_alsa_logging();
 
@@ -89,10 +92,20 @@ impl AudioEngine {
         }
         .context("No audio output device found on system")?;
 
-        let output_device_name = output_device.name().unwrap_or_else(|_| "Default Output".to_string());
+        let output_device_name = output_device
+            .name()
+            .unwrap_or_else(|_| "Default Output".to_string());
 
         let default_out_config = output_device.default_output_config()?;
-        let sample_rate = default_out_config.sample_rate();
+        let sample_rate = if let Ok(configs) = output_device.supported_output_configs() {
+            if configs.into_iter().any(|c| c.min_sample_rate() <= 48000 && c.max_sample_rate() >= 48000) {
+                48000
+            } else {
+                default_out_config.sample_rate()
+            }
+        } else {
+            default_out_config.sample_rate()
+        };
         let out_channels = default_out_config.channels() as usize;
 
         {
@@ -109,52 +122,40 @@ impl AudioEngine {
             buffer_size: cpal::BufferSize::Fixed(512),
         };
 
-        let ring_buffer = HeapRb::<f32>::new(16384);
-        let (mut producer, mut consumer) = ring_buffer.split();
-
         let mut synth = TestSynth::new(sample_rate as f32);
         synth.set_tone_type(synth_tone);
 
         let mut _input_stream_opt: Option<Stream> = None;
-        let mut input_device_name = "System Output Monitor (Digital Direct)".to_string();
+        let mut input_device_name = "System Output Monitor (pw-record)".to_string();
 
-        // Only open physical input stream if user explicitly specified an input device or virtual sink
         if let Some(ref name) = preferred_input {
-            if let Some(input_device) = host.input_devices()?.find(|d| d.name().map(|n| n == *name).unwrap_or(false)) {
-                input_device_name = input_device.name().unwrap_or_else(|_| name.clone());
-                if let Ok(default_in_config) = input_device.default_input_config() {
-                    let in_channels = default_in_config.channels() as usize;
-                    let in_config = StreamConfig {
-                        channels: default_in_config.channels(),
-                        sample_rate,
-                        buffer_size: cpal::BufferSize::Fixed(512),
-                    };
-
-                    let err_fn_in = |_| {};
-                    if let Ok(input_stream) = input_device.build_input_stream(
-                        &in_config,
-                        move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                            for frame in data.chunks_exact(in_channels) {
-                                let l = frame[0];
-                                let r = if frame.len() > 1 { frame[1] } else { l };
-                                let _ = producer.try_push(l);
-                                let _ = producer.try_push(r);
-                            }
-                        },
-                        err_fn_in,
-                        None,
-                    ) {
-                        let _ = input_stream.play();
-                        _input_stream_opt = Some(input_stream);
-                    }
-                }
-            }
+            input_device_name = name.clone();
         }
 
         let pl_clone = Arc::clone(&pipeline);
         let synth_flag = Arc::clone(&synth_enabled);
 
         let err_fn_out = |_| {};
+        
+        let mut resampler = SincFixedIn::<f32>::new(
+            sample_rate as f64 / 48000.0,
+            2.0,
+            SincInterpolationParameters {
+                sinc_len: 128,
+                f_cutoff: 0.95,
+                interpolation: SincInterpolationType::Linear,
+                oversampling_factor: 128,
+                window: WindowFunction::BlackmanHarris2,
+            },
+            256,
+            2,
+        ).unwrap();
+        let mut resampler_in = vec![vec![0.0; 256]; 2];
+        let mut resampler_out = resampler.output_buffer_allocate(true);
+        let mut resampler_out_idx = 0;
+        let mut resampler_out_len = 0;
+        let mut resampler_filled = 0;
+
         let output_stream = output_device.build_output_stream(
             &out_config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -177,18 +178,60 @@ impl AudioEngine {
                     } else {
                         data.fill(0.0);
                     }
-                } else if consumer.occupied_len() >= 2 {
-                    // Play explicitly routed input stream through DSP
+                } else {
+                    let is_48k = sample_rate == 48000;
                     if let Ok(mut pl) = pl_clone.lock() {
                         for frame in data.chunks_exact_mut(out_channels) {
-                            if let (Some(in_l), Some(in_r)) = (consumer.try_pop(), consumer.try_pop()) {
-                                let (out_l, out_r) = pl.process_stereo_sample(in_l, in_r);
-                                frame[0] = out_l;
-                                if frame.len() > 1 {
-                                    frame[1] = out_r;
+                            let (in_l, in_r) = if is_48k {
+                                if let (Some(l), Some(r)) = (consumer.try_pop(), consumer.try_pop()) {
+                                    (l, r)
+                                } else {
+                                    (0.0, 0.0)
                                 }
-                                for extra in frame.iter_mut().skip(2) {
-                                    *extra = 0.0;
+                            } else {
+                                // Resample if hardware requires non-48kHz
+                                if resampler_out_idx >= resampler_out_len {
+                                    while resampler_filled < 256 && consumer.occupied_len() >= 2 {
+                                        if let (Some(l), Some(r)) = (consumer.try_pop(), consumer.try_pop()) {
+                                            resampler_in[0][resampler_filled] = l;
+                                            resampler_in[1][resampler_filled] = r;
+                                            resampler_filled += 1;
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    
+                                    if resampler_filled == 256 {
+                                        if let Ok((_in_len, out_len)) = resampler.process_into_buffer(&resampler_in, &mut resampler_out, None) {
+                                            resampler_out_len = out_len;
+                                            resampler_out_idx = 0;
+                                        }
+                                        resampler_filled = 0;
+                                    }
+                                }
+
+                                if resampler_out_idx < resampler_out_len {
+                                    let l = resampler_out[0][resampler_out_idx];
+                                    let r = resampler_out[1][resampler_out_idx];
+                                    resampler_out_idx += 1;
+                                    (l, r)
+                                } else {
+                                    (0.0, 0.0)
+                                }
+                            };
+
+                            if in_l != 0.0 || in_r != 0.0 {
+                                let (out_l, out_r) = pl.process_stereo_sample(in_l, in_r);
+                                if out_channels == 1 {
+                                    frame[0] = (out_l + out_r) * 0.5;
+                                } else {
+                                    frame[0] = out_l;
+                                    if frame.len() > 1 {
+                                        frame[1] = out_r;
+                                    }
+                                    for extra in frame.iter_mut().skip(2) {
+                                        *extra = 0.0;
+                                    }
                                 }
                             } else {
                                 frame.fill(0.0);
@@ -197,9 +240,6 @@ impl AudioEngine {
                     } else {
                         data.fill(0.0);
                     }
-                } else {
-                    // In digital monitor mode, output stream stays dead silent (0.0) without eating CPU or generating hiss
-                    data.fill(0.0);
                 }
             },
             err_fn_out,

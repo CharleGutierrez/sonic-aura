@@ -47,6 +47,30 @@ impl VirtualSinkManager {
             }
         }
 
+        if let Ok(output) = Command::new("pactl").arg("list").arg("short").arg("sinks").output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // 1. High priority: Bluetooth or USB earphones/headphones
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() > 1 {
+                    let name = parts[1].to_string();
+                    if !name.contains(Self::SINK_NAME) && (name.contains("bluez") || name.contains("usb") || name.contains("headphone")) {
+                        return Some(name);
+                    }
+                }
+            }
+            // 2. Secondary priority: Internal laptop speakers
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() > 1 {
+                    let name = parts[1].to_string();
+                    if !name.contains(Self::SINK_NAME) && (name.contains("analog") || name.contains("pci")) {
+                        return Some(name);
+                    }
+                }
+            }
+        }
+        
         None
     }
 
@@ -65,6 +89,19 @@ impl VirtualSinkManager {
             }
         }
 
+        if let Ok(output) = Command::new("pactl").arg("list").arg("short").arg("sources").output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() > 1 {
+                    let name = parts[1].to_string();
+                    if !name.contains(Self::SINK_NAME) && !name.contains("monitor") {
+                        return Some(name);
+                    }
+                }
+            }
+        }
+        
         None
     }
 
@@ -153,7 +190,150 @@ impl VirtualSinkManager {
         // 3. Set SonicAura_Sink.monitor as default source (SonicAura captures from here)
         let _ = Self::set_default_source(&format!("{}.monitor", Self::SINK_NAME));
 
+        // 4. Force unmute and set volume to 100% to ensure audio isn't lost
+        let _ = Command::new("pactl").args(["set-sink-mute", Self::SINK_NAME, "0"]).output();
+        let _ = Command::new("pactl").args(["set-sink-volume", Self::SINK_NAME, "100%"]).output();
+
         (original_sink, original_source)
+    }
+
+    /// Continuously monitors audio streams to ensure:
+    /// 1. SonicAura's playback stream is ALWAYS routed to target_sink (never trapped in SonicAura_Sink)
+    /// 2. When SonicAura_Sink is selected as default, user media (YouTube/Chrome) is automatically moved into SonicAura_Sink
+    /// 3. SonicAura_Sink remains unmuted at 100% volume even across GNOME output switches
+    pub fn start_output_enforcer(target_sink: String) {
+        std::thread::spawn(move || {
+            let mut last_synced_vol: Option<String> = None;
+            let mut last_synced_mute: Option<bool> = None;
+            let mut last_known_physical = target_sink.clone();
+
+            loop {
+                // Check what the current default sink is in GNOME / PipeWire
+                let current_def = Command::new("pactl")
+                    .arg("get-default-sink")
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                    .unwrap_or_default();
+
+                let default_is_sonic_aura = current_def.contains(Self::SINK_NAME);
+
+                // If user selected a physical sink in GNOME (Speakers or Bluetooth), remember it
+                if !default_is_sonic_aura && !current_def.is_empty() {
+                    last_known_physical = current_def.clone();
+                }
+
+                // Dynamically resolve target physical hardware sink (Bluetooth or Speakers)
+                let active_target = if default_is_sonic_aura {
+                    Self::get_current_default_sink().unwrap_or_else(|| last_known_physical.clone())
+                } else {
+                    last_known_physical.clone()
+                };
+
+                let mut virtual_sink_id = None;
+                let mut target_sink_id = None;
+
+                if let Ok(output) = Command::new("pactl").args(["list", "sinks", "short"]).output() {
+                    let s = String::from_utf8_lossy(&output.stdout);
+                    for line in s.lines() {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() > 1 {
+                            let idx = parts[0].parse::<u32>().ok();
+                            let name = parts[1];
+                            if name.contains(Self::SINK_NAME) {
+                                virtual_sink_id = idx;
+                            }
+                            if name == active_target {
+                                target_sink_id = idx;
+                            }
+                        }
+                    }
+                }
+
+                // Synchronize volume and mute adjustments made by the user in GNOME / keyboard keys
+                if default_is_sonic_aura {
+                    if let Ok(vol_out) = Command::new("pactl").args(["get-sink-volume", Self::SINK_NAME]).output() {
+                        let s = String::from_utf8_lossy(&vol_out.stdout);
+                        if let Some(pct) = s.split('/').nth(1).map(|p| p.trim().to_string()) {
+                            if last_synced_vol.as_ref() != Some(&pct) {
+                                let _ = Command::new("pactl").args(["set-sink-volume", &active_target, &pct]).output();
+                                last_synced_vol = Some(pct);
+                            }
+                        }
+                    }
+                    if let Ok(mute_out) = Command::new("pactl").args(["get-sink-mute", Self::SINK_NAME]).output() {
+                        let s = String::from_utf8_lossy(&mute_out.stdout);
+                        let is_muted = s.contains("yes");
+                        if last_synced_mute != Some(is_muted) {
+                            let _ = Command::new("pactl").args(["set-sink-mute", &active_target, if is_muted { "1" } else { "0" }]).output();
+                            last_synced_mute = Some(is_muted);
+                        }
+                    }
+                }
+
+                if let Ok(output) = Command::new("pactl").args(["list", "sink-inputs"]).output() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    
+                    let mut streams: Vec<(u32, Option<u32>, bool)> = Vec::new();
+                    let mut cur_id: Option<u32> = None;
+                    let mut cur_sink: Option<u32> = None;
+                    let mut cur_is_app = false;
+
+                    for line in stdout.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("Sink Input #") {
+                            if let Some(id) = cur_id {
+                                streams.push((id, cur_sink, cur_is_app));
+                            }
+                            cur_id = trimmed.replace("Sink Input #", "").parse::<u32>().ok();
+                            cur_sink = None;
+                            cur_is_app = false;
+                        } else if trimmed.starts_with("Sink:") {
+                            cur_sink = trimmed.replace("Sink:", "").trim().parse::<u32>().ok();
+                        } else {
+                            let lower = trimmed.to_lowercase();
+                            // Reliably match PipeWire ALSA [sonic_aura], ALSA plug-in [sonic_aura], binary, etc.
+                            if (lower.starts_with("application.name =") || lower.starts_with("node.name =") || lower.starts_with("device.description ="))
+                                && (lower.contains("sonic_aura") || lower.contains("sonic-aura"))
+                            {
+                                cur_is_app = true;
+                            }
+                        }
+                    }
+                    if let Some(id) = cur_id {
+                        streams.push((id, cur_sink, cur_is_app));
+                    }
+
+                    for (id, sink_id, is_app) in streams {
+                        if is_app {
+                            // SonicAura's processed playback must ALWAYS play to physical hardware, never virtual sink!
+                            let needs_move = match (sink_id, target_sink_id) {
+                                (Some(cur), Some(target)) => cur != target,
+                                (Some(cur), None) => Some(cur) == virtual_sink_id,
+                                _ => true,
+                            };
+                            if needs_move {
+                                let _ = Command::new("pactl")
+                                    .args(["move-sink-input", &id.to_string(), &active_target])
+                                    .output();
+                            }
+                        } else if default_is_sonic_aura {
+                            // If SonicAura is selected in GNOME, make sure media apps (Chrome/YouTube) are routed into SonicAura_Sink
+                            let is_on_virtual = match (sink_id, virtual_sink_id) {
+                                (Some(cur), Some(virt)) => cur == virt,
+                                _ => false,
+                            };
+                            if !is_on_virtual {
+                                let _ = Command::new("pactl")
+                                    .args(["move-sink-input", &id.to_string(), Self::SINK_NAME])
+                                    .output();
+                            }
+                        }
+                    }
+                }
+
+                std::thread::sleep(std::time::Duration::from_millis(150));
+            }
+        });
     }
 
     /// Checks if the virtual sink is currently loaded
@@ -197,7 +377,9 @@ impl VirtualSinkManager {
         for line in stdout.lines() {
             if line.contains("module-null-sink") && line.contains(Self::SINK_NAME) {
                 if let Some(id_str) = line.split_whitespace().next() {
-                    let _ = Command::new("pactl").args(["unload-module", id_str]).output();
+                    let _ = Command::new("pactl")
+                        .args(["unload-module", id_str])
+                        .output();
                 }
             }
         }

@@ -6,6 +6,47 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl ThemeMode {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ThemeMode::Dark => "Dark",
+            ThemeMode::Light => "Light",
+        }
+    }
+}
+
+fn default_theme_mode() -> ThemeMode {
+    ThemeMode::Dark
+}
+
+fn default_tinnitus_mode() -> String {
+    "off".to_string()
+}
+
+fn default_tinnitus_freq() -> f32 {
+    6000.0
+}
+
+fn default_tinnitus_q() -> f32 {
+    4.0
+}
+
+fn default_tinnitus_mask_level_db() -> f32 {
+    -36.0
+}
+
+fn default_tinnitus_ear() -> String {
+    "both".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub active_preset: String,
@@ -23,6 +64,18 @@ pub struct AppConfig {
     pub environment_mode: EnvironmentMode,
     pub custom_eq_10: [f32; 10],
     pub master_gain_db: f32,
+    #[serde(default = "default_theme_mode")]
+    pub theme_mode: ThemeMode,
+    #[serde(default = "default_tinnitus_mode")]
+    pub tinnitus_mode: String,
+    #[serde(default = "default_tinnitus_freq")]
+    pub tinnitus_freq: f32,
+    #[serde(default = "default_tinnitus_q")]
+    pub tinnitus_q: f32,
+    #[serde(default = "default_tinnitus_mask_level_db")]
+    pub tinnitus_mask_level_db: f32,
+    #[serde(default = "default_tinnitus_ear")]
+    pub tinnitus_ear: String,
 }
 
 impl Default for AppConfig {
@@ -43,6 +96,12 @@ impl Default for AppConfig {
             environment_mode: EnvironmentMode::CityTraffic,
             custom_eq_10: [0.0; 10],
             master_gain_db: 0.0,
+            theme_mode: ThemeMode::Dark,
+            tinnitus_mode: "off".to_string(),
+            tinnitus_freq: 6000.0,
+            tinnitus_q: 4.0,
+            tinnitus_mask_level_db: -36.0,
+            tinnitus_ear: "both".to_string(),
         }
     }
 }
@@ -74,3 +133,4 @@ impl AppConfig {
         Ok(())
     }
 }
+pub mod autoeq;

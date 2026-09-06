@@ -9,7 +9,8 @@ pub const DEFAULT_EQ_FREQS_10: [f32; 10] = [
 ];
 
 pub const DEFAULT_EQ_FREQS_15: [f32; 15] = [
-    25.0, 40.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0, 1000.0, 1600.0, 2500.0, 4000.0, 6300.0, 10000.0, 16000.0,
+    25.0, 40.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0, 1000.0, 1600.0, 2500.0, 4000.0, 6300.0,
+    10000.0, 16000.0,
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,14 +50,18 @@ impl EqBand {
 
     pub fn set_freq(&mut self, freq: f32) {
         self.config.freq = freq;
-        self.filter_l.set_params(self.config.freq, self.config.q, self.config.gain_db);
-        self.filter_r.set_params(self.config.freq, self.config.q, self.config.gain_db);
+        self.filter_l
+            .set_params(self.config.freq, self.config.q, self.config.gain_db);
+        self.filter_r
+            .set_params(self.config.freq, self.config.q, self.config.gain_db);
     }
 
     pub fn set_q(&mut self, q: f32) {
         self.config.q = q.clamp(0.1, 10.0);
-        self.filter_l.set_params(self.config.freq, self.config.q, self.config.gain_db);
-        self.filter_r.set_params(self.config.freq, self.config.q, self.config.gain_db);
+        self.filter_l
+            .set_params(self.config.freq, self.config.q, self.config.gain_db);
+        self.filter_r
+            .set_params(self.config.freq, self.config.q, self.config.gain_db);
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
@@ -133,7 +138,10 @@ impl Equalizer {
     }
 
     pub fn get_band_gain(&self, band_idx: usize) -> f32 {
-        self.bands.get(band_idx).map(|b| b.config.gain_db).unwrap_or(0.0)
+        self.bands
+            .get(band_idx)
+            .map(|b| b.config.gain_db)
+            .unwrap_or(0.0)
     }
 
     pub fn set_preamp(&mut self, gain_db: f32) {

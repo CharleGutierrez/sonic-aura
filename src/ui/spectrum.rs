@@ -85,7 +85,7 @@ impl<'a> Widget for SpectrumVisualizer<'a> {
                 for (ch_idx, ch) in label.chars().enumerate() {
                     buf[(lx + ch_idx as u16, label_y)]
                         .set_char(ch)
-                        .set_style(Style::default().fg(Color::DarkGray));
+                        .set_style(Style::default().fg(Color::LightCyan));
                 }
             }
         }
@@ -113,7 +113,9 @@ impl VuMeter {
         let right_fill = (right_norm * meter_width as f32).round() as usize;
 
         // Render L channel
-        buf[(area.left(), area.top())].set_symbol("L: ").set_style(Style::default().fg(Color::Cyan));
+        buf[(area.left(), area.top())]
+            .set_symbol("L: ")
+            .set_style(Style::default().fg(Color::Cyan));
         for i in 0..meter_width {
             let x = area.left() + 3 + i as u16;
             let ch = if i < left_fill { '█' } else { '░' };
@@ -124,14 +126,23 @@ impl VuMeter {
             } else {
                 Color::Green
             };
-            buf[(x, area.top())].set_char(ch).set_style(Style::default().fg(color));
+            buf[(x, area.top())]
+                .set_char(ch)
+                .set_style(Style::default().fg(color));
         }
         let l_db_str = format!("{:>5.1}dB", self.peak_db_l);
-        buf.set_string(area.left() + 4 + meter_width as u16, area.top(), l_db_str, Style::default().fg(Color::White));
+        buf.set_string(
+            area.left() + 4 + meter_width as u16,
+            area.top(),
+            l_db_str,
+            Style::default().fg(Color::White),
+        );
 
         // Render R channel
         if area.height > 1 {
-            buf[(area.left(), area.top() + 1)].set_symbol("R: ").set_style(Style::default().fg(Color::Cyan));
+            buf[(area.left(), area.top() + 1)]
+                .set_symbol("R: ")
+                .set_style(Style::default().fg(Color::Cyan));
             for i in 0..meter_width {
                 let x = area.left() + 3 + i as u16;
                 let ch = if i < right_fill { '█' } else { '░' };
@@ -142,10 +153,17 @@ impl VuMeter {
                 } else {
                     Color::Green
                 };
-                buf[(x, area.top() + 1)].set_char(ch).set_style(Style::default().fg(color));
+                buf[(x, area.top() + 1)]
+                    .set_char(ch)
+                    .set_style(Style::default().fg(color));
             }
             let r_db_str = format!("{:>5.1}dB", self.peak_db_r);
-            buf.set_string(area.left() + 4 + meter_width as u16, area.top() + 1, r_db_str, Style::default().fg(Color::White));
+            buf.set_string(
+                area.left() + 4 + meter_width as u16,
+                area.top() + 1,
+                r_db_str,
+                Style::default().fg(Color::White),
+            );
         }
     }
 }

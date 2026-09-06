@@ -7,10 +7,10 @@ use crate::dsp::biquad::{Biquad, FilterType};
 #[derive(Debug, Clone)]
 pub struct HarmonicExciter {
     sample_rate: f32,
-    cutoff_hz: f32,       // Exciter crossover frequency (typically 4.5kHz - 8kHz)
-    drive: f32,           // Non-linear harmonic generation drive
-    air_mix: f32,         // Wet mix level of the generated air/sparkle
-    warmth: f32,          // Ratio of 2nd (warm) vs 3rd (crisp) harmonics
+    cutoff_hz: f32, // Exciter crossover frequency (typically 4.5kHz - 8kHz)
+    drive: f32,     // Non-linear harmonic generation drive
+    air_mix: f32,   // Wet mix level of the generated air/sparkle
+    warmth: f32,    // Ratio of 2nd (warm) vs 3rd (crisp) harmonics
 
     // Highpass filters to isolate high frequencies for excitation
     hpf_in_l: Biquad,
@@ -86,8 +86,20 @@ impl HarmonicExciter {
         self.hpf_in_l = Biquad::new(FilterType::HighPass, cutoff, 0.707, 0.0, self.sample_rate);
         self.hpf_in_r = Biquad::new(FilterType::HighPass, cutoff, 0.707, 0.0, self.sample_rate);
 
-        self.hpf_air_l = Biquad::new(FilterType::HighPass, air_cutoff, 0.707, 0.0, self.sample_rate);
-        self.hpf_air_r = Biquad::new(FilterType::HighPass, air_cutoff, 0.707, 0.0, self.sample_rate);
+        self.hpf_air_l = Biquad::new(
+            FilterType::HighPass,
+            air_cutoff,
+            0.707,
+            0.0,
+            self.sample_rate,
+        );
+        self.hpf_air_r = Biquad::new(
+            FilterType::HighPass,
+            air_cutoff,
+            0.707,
+            0.0,
+            self.sample_rate,
+        );
 
         self.shelf_l = Biquad::new(FilterType::HighShelf, 12000.0, 0.707, 2.5, self.sample_rate);
         self.shelf_r = Biquad::new(FilterType::HighShelf, 12000.0, 0.707, 2.5, self.sample_rate);
@@ -106,8 +118,18 @@ impl HarmonicExciter {
         // 2. Track fast HF envelope
         let env_attack = 0.15;
         let env_release = 0.005;
-        self.hf_envelope_l += (hf_l.abs() - self.hf_envelope_l) * (if hf_l.abs() > self.hf_envelope_l { env_attack } else { env_release });
-        self.hf_envelope_r += (hf_r.abs() - self.hf_envelope_r) * (if hf_r.abs() > self.hf_envelope_r { env_attack } else { env_release });
+        self.hf_envelope_l += (hf_l.abs() - self.hf_envelope_l)
+            * (if hf_l.abs() > self.hf_envelope_l {
+                env_attack
+            } else {
+                env_release
+            });
+        self.hf_envelope_r += (hf_r.abs() - self.hf_envelope_r)
+            * (if hf_r.abs() > self.hf_envelope_r {
+                env_attack
+            } else {
+                env_release
+            });
 
         // 3. Generate non-linear euphonic harmonics
         // Soft polynomial saturation: mix of even (warmth) and odd (crisp bite) harmonics

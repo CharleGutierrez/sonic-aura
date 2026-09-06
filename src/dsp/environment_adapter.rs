@@ -44,12 +44,24 @@ impl EnvironmentMode {
 
     pub fn description(&self) -> &'static str {
         match self {
-            EnvironmentMode::CityTraffic => "Overcomes urban traffic & engine rumble: boosts anti-masking sub-bass, lifts speech clarity (+3.5dB), and expands dynamic punch.",
-            EnvironmentMode::CommuteTransit => "Cabin drone immunity: suppresses engine rumble masking and applies dialogue-priority compression for clear travel listening.",
-            EnvironmentMode::CafeOffice => "Separates audio from background chatter: applies vocal formant focus and 3D soundstage widening to isolate music from crowd noise.",
-            EnvironmentMode::QuietRemote => "Maximizes audiophile dynamic range, micro-detail resolution, and natural 3D depth with gentle transparent processing.",
-            EnvironmentMode::LateNightWhisper => "Full-bodied listening at whisper-quiet volumes: aggressive Fletcher-Munson equal-loudness curve ensures deep bass & clear vocals at 15% volume.",
-            EnvironmentMode::NeutralStudio => "Standard balanced acoustic environment without external noise compensation.",
+            EnvironmentMode::CityTraffic => {
+                "Overcomes urban traffic & engine rumble: boosts anti-masking sub-bass, lifts speech clarity (+3.5dB), and expands dynamic punch."
+            }
+            EnvironmentMode::CommuteTransit => {
+                "Cabin drone immunity: suppresses engine rumble masking and applies dialogue-priority compression for clear travel listening."
+            }
+            EnvironmentMode::CafeOffice => {
+                "Separates audio from background chatter: applies vocal formant focus and 3D soundstage widening to isolate music from crowd noise."
+            }
+            EnvironmentMode::QuietRemote => {
+                "Maximizes audiophile dynamic range, micro-detail resolution, and natural 3D depth with gentle transparent processing."
+            }
+            EnvironmentMode::LateNightWhisper => {
+                "Full-bodied listening at whisper-quiet volumes: aggressive Fletcher-Munson equal-loudness curve ensures deep bass & clear vocals at 15% volume."
+            }
+            EnvironmentMode::NeutralStudio => {
+                "Standard balanced acoustic environment without external noise compensation."
+            }
         }
     }
 
@@ -68,21 +80,11 @@ impl EnvironmentMode {
                 2.0,  // 8kHz
                 1.5,  // 16kHz
             ],
-            EnvironmentMode::CommuteTransit => [
-                6.0, 5.0, 2.5, -0.5, 0.0, 2.0, 3.5, 3.0, 2.5, 2.0,
-            ],
-            EnvironmentMode::CafeOffice => [
-                2.0, 1.5, 0.5, -2.0, -1.0, 2.5, 3.5, 3.0, 2.5, 3.0,
-            ],
-            EnvironmentMode::QuietRemote => [
-                1.5, 1.0, 0.5, 0.0, 0.0, 0.5, 1.0, 1.5, 2.5, 3.5,
-            ],
-            EnvironmentMode::LateNightWhisper => [
-                7.0, 6.0, 3.5, 1.0, 1.5, 2.5, 4.0, 4.5, 5.5, 6.5,
-            ],
-            EnvironmentMode::NeutralStudio => [
-                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-            ],
+            EnvironmentMode::CommuteTransit => [6.0, 5.0, 2.5, -0.5, 0.0, 2.0, 3.5, 3.0, 2.5, 2.0],
+            EnvironmentMode::CafeOffice => [2.0, 1.5, 0.5, -2.0, -1.0, 2.5, 3.5, 3.0, 2.5, 3.0],
+            EnvironmentMode::QuietRemote => [1.5, 1.0, 0.5, 0.0, 0.0, 0.5, 1.0, 1.5, 2.5, 3.5],
+            EnvironmentMode::LateNightWhisper => [7.0, 6.0, 3.5, 1.0, 1.5, 2.5, 4.0, 4.5, 5.5, 6.5],
+            EnvironmentMode::NeutralStudio => [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         }
     }
 

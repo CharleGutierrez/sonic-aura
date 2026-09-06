@@ -47,13 +47,27 @@ impl EarphoneType {
 
     pub fn description(&self) -> &'static str {
         match self {
-            EarphoneType::BudgetEarbudsFix => "Rescues cheap earbuds: injects psychoacoustic missing fundamental bass, notches 3kHz harshness, adds >10kHz air.",
-            EarphoneType::AirPodsAndTws => "Calibrated for AirPods/TWS: Harman In-Ear target curve, 3D Atmos soundstage, pristine vocal articulation.",
-            EarphoneType::BassHeavyCommercial => "Cleans up bloated mid-bass, restores buried vocal formants, and sharpens transient snare/drum punch.",
-            EarphoneType::IemAudiophile => "Harman 2019 Reference In-Ear Target with Meier binaural crossfeed to eliminate listening fatigue.",
-            EarphoneType::StudioOpenBack => "Extends rolling-off sub-bass (<50Hz), smooths 8.5kHz treble spikes, and creates deep concert hall imaging.",
-            EarphoneType::StudioClosedBack => "Eliminates enclosed earcup resonance (220Hz), expands narrow soundstage, and delivers mastering clarity.",
-            EarphoneType::UniversalNeutral => "Zero hardware coloration, completely transparent studio calibration.",
+            EarphoneType::BudgetEarbudsFix => {
+                "Rescues cheap earbuds: injects psychoacoustic missing fundamental bass, notches 3kHz harshness, adds >10kHz air."
+            }
+            EarphoneType::AirPodsAndTws => {
+                "Calibrated for AirPods/TWS: Harman In-Ear target curve, 3D Atmos soundstage, pristine vocal articulation."
+            }
+            EarphoneType::BassHeavyCommercial => {
+                "Cleans up bloated mid-bass, restores buried vocal formants, and sharpens transient snare/drum punch."
+            }
+            EarphoneType::IemAudiophile => {
+                "Harman 2019 Reference In-Ear Target with Meier binaural crossfeed to eliminate listening fatigue."
+            }
+            EarphoneType::StudioOpenBack => {
+                "Extends rolling-off sub-bass (<50Hz), smooths 8.5kHz treble spikes, and creates deep concert hall imaging."
+            }
+            EarphoneType::StudioClosedBack => {
+                "Eliminates enclosed earcup resonance (220Hz), expands narrow soundstage, and delivers mastering clarity."
+            }
+            EarphoneType::UniversalNeutral => {
+                "Zero hardware coloration, completely transparent studio calibration."
+            }
         }
     }
 
@@ -61,35 +75,25 @@ impl EarphoneType {
     pub fn eq_offsets(&self) -> [f32; 10] {
         match self {
             EarphoneType::BudgetEarbudsFix => [
-                6.5,   // 31Hz: Sub-bass excitation boost
-                5.0,   // 63Hz: Lows
-                2.5,   // 125Hz
-                -3.5,  // 250Hz: De-mud boxiness
-                -2.0,  // 500Hz
-                1.5,   // 1kHz: Vocal presence
-                -2.5,  // 2kHz: Tames piercing cheap driver resonance
-                2.0,   // 4kHz: Clarity
-                4.5,   // 8kHz: Shimmer
-                6.0,   // 16kHz: Missing Air restore
+                6.5,  // 31Hz: Sub-bass excitation boost
+                5.0,  // 63Hz: Lows
+                2.5,  // 125Hz
+                -3.5, // 250Hz: De-mud boxiness
+                -2.0, // 500Hz
+                1.5,  // 1kHz: Vocal presence
+                -2.5, // 2kHz: Tames piercing cheap driver resonance
+                2.0,  // 4kHz: Clarity
+                4.5,  // 8kHz: Shimmer
+                6.0,  // 16kHz: Missing Air restore
             ],
-            EarphoneType::AirPodsAndTws => [
-                3.5, 2.5, 1.0, -0.5, 0.0, 1.2, 2.2, 2.8, 3.5, 4.0,
-            ],
-            EarphoneType::BassHeavyCommercial => [
-                1.0, 0.0, -3.5, -4.0, -1.5, 1.5, 3.0, 3.5, 4.0, 3.5,
-            ],
-            EarphoneType::IemAudiophile => [
-                2.5, 2.0, 0.8, -0.2, 0.0, 0.8, 1.5, 1.2, 1.0, 2.5,
-            ],
-            EarphoneType::StudioOpenBack => [
-                5.0, 3.5, 1.2, 0.0, 0.0, 0.5, 1.0, 0.5, -1.8, 2.5,
-            ],
-            EarphoneType::StudioClosedBack => [
-                2.0, 1.5, -2.5, -2.0, 0.5, 1.2, 2.0, 2.5, 3.0, 3.5,
-            ],
-            EarphoneType::UniversalNeutral => [
-                0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
-            ],
+            EarphoneType::AirPodsAndTws => [3.5, 2.5, 1.0, -0.5, 0.0, 1.2, 2.2, 2.8, 3.5, 4.0],
+            EarphoneType::BassHeavyCommercial => {
+                [1.0, 0.0, -3.5, -4.0, -1.5, 1.5, 3.0, 3.5, 4.0, 3.5]
+            }
+            EarphoneType::IemAudiophile => [2.5, 2.0, 0.8, -0.2, 0.0, 0.8, 1.5, 1.2, 1.0, 2.5],
+            EarphoneType::StudioOpenBack => [5.0, 3.5, 1.2, 0.0, 0.0, 0.5, 1.0, 0.5, -1.8, 2.5],
+            EarphoneType::StudioClosedBack => [2.0, 1.5, -2.5, -2.0, 0.5, 1.2, 2.0, 2.5, 3.0, 3.5],
+            EarphoneType::UniversalNeutral => [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         }
     }
 

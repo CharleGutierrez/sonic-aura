@@ -55,7 +55,11 @@ mod tests {
         }
 
         // Verify there is no sudden violent step discontinuity (Dirac click)
-        assert!(max_step_delta < 0.15, "Bypass produced a sudden pop/click step discontinuity: {}", max_step_delta);
+        assert!(
+            max_step_delta < 0.15,
+            "Bypass produced a sudden pop/click step discontinuity: {}",
+            max_step_delta
+        );
     }
 
     #[test]
@@ -114,8 +118,16 @@ mod tests {
             let t = i as f32 / 48000.0;
             let hot_signal = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 4.0;
             let (out_l, out_r) = limiter.process(hot_signal, hot_signal);
-            assert!(out_l.abs() <= ceiling + 1e-3, "Sample exceeded limiter ceiling: {}", out_l);
-            assert!(out_r.abs() <= ceiling + 1e-3, "Sample exceeded limiter ceiling: {}", out_r);
+            assert!(
+                out_l.abs() <= ceiling + 1e-3,
+                "Sample exceeded limiter ceiling: {}",
+                out_l
+            );
+            assert!(
+                out_r.abs() <= ceiling + 1e-3,
+                "Sample exceeded limiter ceiling: {}",
+                out_r
+            );
         }
     }
 
@@ -200,5 +212,121 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_tinnitus_notch_attenuation() {
+        use sonic_aura::dsp::audiogram::{AudiogramMasker, TinnitusEar, TinnitusTherapyMode};
+        let mut masker = AudiogramMasker::new(48000.0);
+        masker.set_mode(TinnitusTherapyMode::Notch);
+        masker.set_ear(TinnitusEar::Both);
+        masker.set_freq(6000.0);
+        masker.set_q(4.0);
+
+        let sample_rate = 48000.0;
+        let freq = 6000.0;
+        let mut max_in = 0.0_f32;
+        let mut max_out = 0.0_f32;
+
+        // Run for 2000 samples to let filter settle
+        for i in 0..2000 {
+            let t = i as f32 / sample_rate;
+            let s = (2.0 * std::f32::consts::PI * freq * t).sin();
+            let (out_l, out_r) = masker.process(s, s);
+
+            if i > 500 {
+                max_in = max_in.max(s.abs());
+                max_out = max_out.max(out_l.abs().max(out_r.abs()));
+            }
+        }
+
+        // Notch filter at target pitch should attenuate amplitude by at least 85% (>16 dB)
+        assert!(max_out < max_in * 0.15, "Notch did not sufficiently attenuate: max_out={}, max_in={}", max_out, max_in);
+    }
+
+    #[test]
+    fn test_tinnitus_ear_targeting() {
+        use sonic_aura::dsp::audiogram::{AudiogramMasker, TinnitusEar, TinnitusTherapyMode};
+        let mut masker = AudiogramMasker::new(48000.0);
+        masker.set_mode(TinnitusTherapyMode::Notch);
+        masker.set_ear(TinnitusEar::LeftOnly); // Only Left ear notched!
+        masker.set_freq(6000.0);
+        masker.set_q(4.0);
+
+        let sample_rate = 48000.0;
+        let freq = 6000.0;
+        let mut max_out_l = 0.0_f32;
+        let mut max_out_r = 0.0_f32;
+
+        for i in 0..2000 {
+            let t = i as f32 / sample_rate;
+            let s = (2.0 * std::f32::consts::PI * freq * t).sin();
+            let (out_l, out_r) = masker.process(s, s);
+
+            if i > 500 {
+                max_out_l = max_out_l.max(out_l.abs());
+                max_out_r = max_out_r.max(out_r.abs());
+            }
+        }
+
+        // Left ear should be notched heavily
+        assert!(max_out_l < 0.2, "Left ear should be notched: {}", max_out_l);
+        // Right ear should be unattenuated (near 1.0)
+        assert!(max_out_r > 0.9, "Right ear should NOT be notched: {}", max_out_r);
+    }
+
+    #[test]
+    fn test_tinnitus_masking_noise_and_tone() {
+        use sonic_aura::dsp::audiogram::{AudiogramMasker, TinnitusEar, TinnitusTherapyMode};
+        let mut masker = AudiogramMasker::new(48000.0);
+        masker.set_mode(TinnitusTherapyMode::Masking);
+        masker.set_ear(TinnitusEar::Both);
+        masker.set_freq(8000.0);
+        masker.set_mask_level_db(-30.0);
+
+        // Process silence in to verify noise is injected safely
+        let mut max_mask_l = 0.0_f32;
+        for _ in 0..1000 {
+            let (out_l, out_r) = masker.process(0.0, 0.0);
+            assert!(out_l.is_finite());
+            assert!(out_r.is_finite());
+            max_mask_l = max_mask_l.max(out_l.abs());
+        }
+
+        assert!(max_mask_l > 0.0, "Masking noise must be generated");
+        assert!(max_mask_l < 0.2, "Masking noise must remain within safe soft limits");
+
+        // Test Pitch-Matching Tone
+        masker.set_mode(TinnitusTherapyMode::Off);
+        masker.set_test_tone(true);
+        let mut max_tone = 0.0_f32;
+        for _ in 0..2000 {
+            let (out_l, _) = masker.process(0.0, 0.0);
+            max_tone = max_tone.max(out_l.abs());
+        }
+        assert!(max_tone > 0.01, "Test tone should be audible");
+        assert!(max_tone < 0.05, "Test tone must stay soft (-30 dBFS peak ~0.0316)");
+    }
+
+    #[test]
+    fn test_theme_and_tinnitus_config() {
+        use sonic_aura::config::{AppConfig, ThemeMode};
+        let mut cfg = AppConfig::default();
+        cfg.theme_mode = ThemeMode::Light;
+        cfg.tinnitus_mode = "combined".to_string();
+        cfg.tinnitus_freq = 7500.0;
+        cfg.tinnitus_q = 8.0;
+        cfg.tinnitus_mask_level_db = -42.0;
+        cfg.tinnitus_ear = "left".to_string();
+
+        let toml_str = toml::to_string(&cfg).expect("Failed to serialize AppConfig");
+        let deserialized: AppConfig = toml::from_str(&toml_str).expect("Failed to deserialize AppConfig");
+
+        assert_eq!(deserialized.theme_mode, ThemeMode::Light);
+        assert_eq!(deserialized.tinnitus_mode, "combined");
+        assert_eq!(deserialized.tinnitus_freq, 7500.0);
+        assert_eq!(deserialized.tinnitus_q, 8.0);
+        assert_eq!(deserialized.tinnitus_mask_level_db, -42.0);
+        assert_eq!(deserialized.tinnitus_ear, "left");
     }
 }

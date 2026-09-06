@@ -20,11 +20,21 @@ mod tests {
         println!("Visualizer bins:");
         for (i, b) in analyzer.visualizer_bins.iter().enumerate() {
             print!("b{:02}:{:.2} ", i, b);
-            if (i + 1) % 8 == 0 { println!(); }
+            if (i + 1) % 8 == 0 {
+                println!();
+            }
         }
 
-        assert!(analyzer.features.peak_db > -10.0, "Peak db is too low: {}", analyzer.features.peak_db);
-        let max_bin = analyzer.visualizer_bins.iter().cloned().fold(0.0_f32, f32::max);
+        assert!(
+            analyzer.features.peak_db > -10.0,
+            "Peak db is too low: {}",
+            analyzer.features.peak_db
+        );
+        let max_bin = analyzer
+            .visualizer_bins
+            .iter()
+            .cloned()
+            .fold(0.0_f32, f32::max);
         assert!(max_bin > 0.3, "Max bin is too low: {}", max_bin);
     }
 }

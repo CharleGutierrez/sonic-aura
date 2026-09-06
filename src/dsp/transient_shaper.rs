@@ -5,9 +5,9 @@
 #[derive(Debug, Clone)]
 pub struct TransientShaper {
     sample_rate: f32,
-    attack: f32,   // Attack boost/cut (-1.0 to +2.0)
-    sustain: f32,  // Sustain boost/cut (-1.0 to +1.0)
-    crispness: f32,// HF transient emphasis
+    attack: f32,    // Attack boost/cut (-1.0 to +2.0)
+    sustain: f32,   // Sustain boost/cut (-1.0 to +1.0)
+    crispness: f32, // HF transient emphasis
 
     // Envelope followers
     fast_env_l: f32,
@@ -24,7 +24,7 @@ impl TransientShaper {
     pub fn new(sample_rate: f32) -> Self {
         let mut instance = Self {
             sample_rate,
-            attack: 0.5,     // default punchy +50%
+            attack: 0.5, // default punchy +50%
             sustain: 0.0,
             crispness: 0.3,
             fast_env_l: 0.0,
@@ -93,8 +93,12 @@ impl TransientShaper {
         let trans_ratio_l = (diff_l / base_l).max(-0.95);
         let trans_ratio_r = (diff_r / base_r).max(-0.95);
 
-        let attack_gain_l = 1.0 + self.attack * trans_ratio_l.max(0.0) + self.sustain * (1.0 - (trans_ratio_l.max(0.0)).min(1.0));
-        let attack_gain_r = 1.0 + self.attack * trans_ratio_r.max(0.0) + self.sustain * (1.0 - (trans_ratio_r.max(0.0)).min(1.0));
+        let attack_gain_l = 1.0
+            + self.attack * trans_ratio_l.max(0.0)
+            + self.sustain * (1.0 - (trans_ratio_l.max(0.0)).min(1.0));
+        let attack_gain_r = 1.0
+            + self.attack * trans_ratio_r.max(0.0)
+            + self.sustain * (1.0 - (trans_ratio_r.max(0.0)).min(1.0));
 
         let out_l = in_l * attack_gain_l.clamp(0.1, 3.0);
         let out_r = in_r * attack_gain_r.clamp(0.1, 3.0);

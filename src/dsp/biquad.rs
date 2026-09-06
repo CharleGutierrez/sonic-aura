@@ -112,7 +112,8 @@ impl BiquadCoefficients {
                 let sqrt_a = a.sqrt();
                 let b0 = a * ((a + 1.0) + (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha);
                 let b1 = -2.0 * a * ((a - 1.0) + (a + 1.0) * cos_w0);
-                let b2 = a * ((a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * air_fix(alpha, sqrt_a));
+                let b2 =
+                    a * ((a + 1.0) + (a - 1.0) * cos_w0 - 2.0 * sqrt_a * air_fix(alpha, sqrt_a));
                 let a0 = (a + 1.0) - (a - 1.0) * cos_w0 + 2.0 * sqrt_a * alpha;
                 let a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cos_w0);
                 let a2 = (a + 1.0) - (a - 1.0) * cos_w0 - 2.0 * sqrt_a * alpha;

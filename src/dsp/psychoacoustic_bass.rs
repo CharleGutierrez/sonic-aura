@@ -9,9 +9,9 @@ use crate::dsp::biquad::{Biquad, FilterType};
 pub struct PsychoacousticBass {
     sample_rate: f32,
     cutoff_hz: f32,
-    intensity: f32,         // 0.0 to 2.0 (amount of harmonic bass added)
-    speaker_protect: bool,   // High-pass filter direct sub-bass to protect tiny laptop drivers
-    direct_sub_gain: f32,    // Gain for original sub-bass
+    intensity: f32,        // 0.0 to 2.0 (amount of harmonic bass added)
+    speaker_protect: bool, // High-pass filter direct sub-bass to protect tiny laptop drivers
+    direct_sub_gain: f32,  // Gain for original sub-bass
 
     // Filters for Left & Right channels
     sub_lpf_l: Biquad,
@@ -52,8 +52,20 @@ impl PsychoacousticBass {
             harm_bpf_l: Biquad::new(FilterType::BandPass, harm_center, 1.2, 0.0, sample_rate),
             harm_bpf_r: Biquad::new(FilterType::BandPass, harm_center, 1.2, 0.0, sample_rate),
 
-            protect_hpf_l: Biquad::new(FilterType::HighPass, cutoff_hz * 0.75, 0.707, 0.0, sample_rate),
-            protect_hpf_r: Biquad::new(FilterType::HighPass, cutoff_hz * 0.75, 0.707, 0.0, sample_rate),
+            protect_hpf_l: Biquad::new(
+                FilterType::HighPass,
+                cutoff_hz * 0.75,
+                0.707,
+                0.0,
+                sample_rate,
+            ),
+            protect_hpf_r: Biquad::new(
+                FilterType::HighPass,
+                cutoff_hz * 0.75,
+                0.707,
+                0.0,
+                sample_rate,
+            ),
 
             envelope_l: 0.0,
             envelope_r: 0.0,
@@ -94,11 +106,35 @@ impl PsychoacousticBass {
         self.sub_hpf_l = Biquad::new(FilterType::HighPass, 30.0, 0.707, 0.0, self.sample_rate);
         self.sub_hpf_r = Biquad::new(FilterType::HighPass, 30.0, 0.707, 0.0, self.sample_rate);
 
-        self.harm_bpf_l = Biquad::new(FilterType::BandPass, harm_center, 1.2, 0.0, self.sample_rate);
-        self.harm_bpf_r = Biquad::new(FilterType::BandPass, harm_center, 1.2, 0.0, self.sample_rate);
+        self.harm_bpf_l = Biquad::new(
+            FilterType::BandPass,
+            harm_center,
+            1.2,
+            0.0,
+            self.sample_rate,
+        );
+        self.harm_bpf_r = Biquad::new(
+            FilterType::BandPass,
+            harm_center,
+            1.2,
+            0.0,
+            self.sample_rate,
+        );
 
-        self.protect_hpf_l = Biquad::new(FilterType::HighPass, cutoff * 0.75, 0.707, 0.0, self.sample_rate);
-        self.protect_hpf_r = Biquad::new(FilterType::HighPass, cutoff * 0.75, 0.707, 0.0, self.sample_rate);
+        self.protect_hpf_l = Biquad::new(
+            FilterType::HighPass,
+            cutoff * 0.75,
+            0.707,
+            0.0,
+            self.sample_rate,
+        );
+        self.protect_hpf_r = Biquad::new(
+            FilterType::HighPass,
+            cutoff * 0.75,
+            0.707,
+            0.0,
+            self.sample_rate,
+        );
     }
 
     /// Process a stereo sample frame (left, right) -> (out_left, out_right)
@@ -117,8 +153,16 @@ impl PsychoacousticBass {
         let abs_r = sub_r.abs();
         let attack = 0.05;
         let release = 0.002;
-        self.envelope_l += if abs_l > self.envelope_l { attack * (abs_l - self.envelope_l) } else { release * (abs_l - self.envelope_l) };
-        self.envelope_r += if abs_r > self.envelope_r { attack * (abs_r - self.envelope_r) } else { release * (abs_r - self.envelope_r) };
+        self.envelope_l += if abs_l > self.envelope_l {
+            attack * (abs_l - self.envelope_l)
+        } else {
+            release * (abs_l - self.envelope_l)
+        };
+        self.envelope_r += if abs_r > self.envelope_r {
+            attack * (abs_r - self.envelope_r)
+        } else {
+            release * (abs_r - self.envelope_r)
+        };
 
         // 3. Generate 2nd and 3rd harmonics using non-linear wave-shaping
         // y2 = 2*x^2 - 1 (even harmonic for warmth/punch)
@@ -141,7 +185,10 @@ impl PsychoacousticBass {
 
         // 5. Clean up direct signal if speaker protection is enabled
         let (direct_l, direct_r) = if self.speaker_protect {
-            (self.protect_hpf_l.process(in_l), self.protect_hpf_r.process(in_r))
+            (
+                self.protect_hpf_l.process(in_l),
+                self.protect_hpf_r.process(in_r),
+            )
         } else {
             (in_l, in_r)
         };
