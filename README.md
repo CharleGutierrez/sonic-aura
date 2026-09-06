@@ -158,6 +158,67 @@ sonic_aura --earphone airpods --env cafe
 
 ---
 
+## 🐧 Linux Requirements & Dependencies
+
+### 1. Runtime Requirements (To Run the Program)
+
+SonicAura uses Linux audio routing to capture system sound, process it through the DSP pipeline, and output it to your physical speakers/headphones.
+
+| Component | Required Tool / Package | Why It’s Needed |
+|---|---|---|
+| **Audio Server** | **PipeWire** (recommended) or **PulseAudio** | System sound server. PipeWire is the default on Ubuntu 22.10+, Zorin OS 18+, Fedora 34+, Arch, Debian 12+. |
+| **Routing & Control** | **`pactl`** (from `pulseaudio-utils` or `pipewire-pulse`) | Used by `virtual_device.rs` to create the virtual `SonicAura_Sink`, route audio, and mirror hardware volume controls. |
+| **Audio Capture** | **`pw-record`** & **`pw-link`** (from `pipewire` / `pipewire-bin`), or **`parec`** | Used for zero-latency system monitor loopback capture without capturing microphone noise. |
+| **ALSA Libraries** | **`libasound2`** | Required by the Rust audio backend (`cpal`). |
+| **Terminal** | Any modern terminal emulator (GNOME Terminal, Alacritty, Kitty, WezTerm, Konsole, etc.) | Terminal with ANSI / 24-bit color support for the TUI visualizer. |
+
+### 2. Build Requirements (To Compile from Source)
+
+If you are building from source using `cargo build --release`:
+- **Rust Toolchain**: Rust **1.85+** (Rust 2024 edition).
+- **C Compiler**: `gcc` / `clang` & `make` (`build-essential`).
+- **ALSA Development Headers**: `libasound2-dev` (needed by `cpal`).
+- **OpenSSL Development Headers**: `libssl-dev` (needed by `reqwest` for AutoEQ database downloads).
+- **`pkg-config`**: To allow Cargo to detect system C libraries.
+
+### 3. Quick One-Liner Install by Distribution
+
+#### **Ubuntu / Debian / Zorin OS / Linux Mint / Pop!_OS**:
+```bash
+# Runtime dependencies:
+sudo apt update && sudo apt install -y pipewire-bin pulseaudio-utils libasound2
+
+# Build dependencies (only if building from source):
+sudo apt install -y build-essential pkg-config libasound2-dev libssl-dev
+```
+
+#### **Fedora / RHEL / AlmaLinux**:
+```bash
+# Runtime dependencies:
+sudo dnf install -y pipewire-utils pulseaudio-utils alsa-lib
+
+# Build dependencies (only if building from source):
+sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config alsa-lib-devel openssl-devel
+```
+
+#### **Arch Linux / Manjaro**:
+```bash
+# Runtime dependencies:
+sudo pacman -S --needed pipewire pipewire-pulse libpulse alsa-lib
+
+# Build dependencies (only if building from source):
+sudo pacman -S --needed base-devel openssl
+```
+
+### 4. Verify System Readiness
+
+Run this one-liner to verify all required audio tools are available:
+```bash
+which pactl pw-record pw-link parec
+```
+
+---
+
 ## 📄 License
 MIT License
 
