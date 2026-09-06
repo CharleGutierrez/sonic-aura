@@ -1,13 +1,39 @@
-# ⚡ SonicAura AI: Universal Audio Enhancer in Rust
-### Dolby Atmos & Bang & Olufsen-Grade Sound • Adapts to ANY Earphones • Adapts to ANY Environment (City to Remote)
+# ⚡ SonicAura AI: Universal Audio Enhancer & Tinnitus Relief Suite in Rust
+### Dolby Atmos & Bang & Olufsen-Grade Sound • Clinical Tinnitus Relief • Adapts to ANY Earphones • Dark & Light Themes
 
-A lightweight, ultra-low latency, psychoacoustic AI sound enhancement engine written in pure **Rust**.
+A high-performance, ultra-low latency, psychoacoustic AI sound enhancement and acoustic therapy engine written in pure **Rust**.
 
-Transforms laptop speakers, external soundbars, cheap earbuds, Apple AirPods, high-end IEMs, and studio headphones into an immersive, crisp, and high-fidelity acoustic experience inspired by **Dolby Atmos**, **Bang & Olufsen BeoPlay**, and **Apple Spatial Audio**.
+Transforms laptop speakers, external soundbars, cheap earbuds, Apple AirPods, high-end IEMs, and studio headphones into an immersive, crystal-clear acoustic experience inspired by **Dolby Atmos**, **Bang & Olufsen BeoPlay**, and **Apple Spatial Audio** — while providing clinical-grade **Tailor-Made Notched Music Training (TMNST)** and **Narrowband Acoustic Masking** for tinnitus relief.
 
 ---
 
-## 🎧 1. Universal Earphone Hardware Calibration Profiles
+## 🩺 1. Interactive Tinnitus Relief & Acoustic Therapy Studio
+
+SonicAura AI includes a clinical acoustic therapy engine built directly into the live audio pipeline right before the True-Peak brickwall limiter:
+
+| Therapy Feature | Acoustic Mechanism & Clinical Protocol | Controls & Capabilities |
+|---|---|---|
+| **TMNST (Tailor-Made Notched Music Training)** | Filters out your exact tinnitus ringing frequency from any music or system sound (YouTube, Spotify, games). Stimulates **lateral inhibition** across auditory cortex neurons, retraining maladaptive brain hyperactivity over time (PNAS protocol). | Selectable notch filter bandwidth ($Q=2.0$ Wide, $Q=4.0$ Standard, $Q=8.0$ Sharp Notch). Real-time center frequency adjustment (500 Hz – 18,000 Hz). |
+| **Narrowband Pink Noise Masker** | Synthesizes an organic 3-pole pink noise pillow passed through a tuned stereo bandpass filter centered at your tinnitus pitch. Blends and softens the ringing sensation without ear fatigue. | Attenuation range from gentle background pillow (`-70.0 dB`) to therapeutic masking (`-12.0 dB`). |
+| **Combined Acoustic Therapy** | Simultaneously notches system audio while injecting shaped narrowband ambient noise for comprehensive acoustic relief. | Active notched music + soothing shaped ambient noise pillow. |
+| **Pitch-Matching Sine Calibrator** | Pure sine wave generator calibrated at a safe, soft level (`-30 dBFS`) with smooth 15ms de-clicking crossfades. Allows pinpointing your exact ringing frequency before engaging therapy. | Hotkey **`[T]`** or **`[Space]`** to toggle on/off. Sweep pitch in 100 Hz increments with **`[←]`** / **`[→]`**. |
+| **Selective Ear Targeting** | Supports unilateral and asymmetrical tinnitus. Directs therapy to the affected ear while leaving the other untouched. | `Both Ears`, `Left Ear Only`, `Right Ear Only`. |
+| **True-Peak Limiter Guard** | All therapeutic signals pass through the 64-sample lookahead brickwall limiter. | Guarantees the output never clips or exceeds safe listening thresholds. |
+
+---
+
+## 🎨 2. Universal Dark & Light Theme Engine
+
+SonicAura features an adaptive dual-theme design system engineered for high-contrast visibility and legibility across all terminal configurations:
+
+- **🌙 Dark Theme (Default)**: Cyberpunk-inspired palette featuring neon cyan (`#00FFFF`), luminous light cyan (`#55FFFF`) for razor-sharp label legibility, emerald green, and vivid amber accents on dark terminal backgrounds.
+- **☀️ Light Theme**: Clean studio aesthetic with a soft canvas (`#F5F6FA`), dark slate typography (`#3C4655`), deep blue borders, and emerald/amber indicators.
+- **Instant Hotkey Toggle**: Press **`[L]`** anywhere in the TUI to toggle between Dark and Light mode in real-time.
+- **Persistent Choice**: Theme preference is automatically saved in `~/.config/sonic_aura/config.toml`.
+
+---
+
+## 🎧 3. Universal Earphone Hardware Calibration Profiles
 
 SonicAura AI auto-calibrates to overcome the physical driver limitations of any earphone in the market:
 
@@ -23,7 +49,7 @@ SonicAura AI auto-calibrates to overcome the physical driver limitations of any 
 
 ---
 
-## 🌍 2. Adaptive Environmental Noise & Acoustic Context Engine
+## 🌍 4. Adaptive Environmental Noise & Acoustic Context Engine
 
 Dynamic psychoacoustic anti-masking adapts automatically to your real-world acoustic surroundings:
 
@@ -38,7 +64,20 @@ Dynamic psychoacoustic anti-masking adapts automatically to your real-world acou
 
 ---
 
-## 🎛️ Complete 10-Band ISO Precision Equalizer & Presets
+## 🔬 5. Commercial-Grade DSP Architecture
+
+- **True Stereo RNNoise Suppression**: Dual-channel deep neural network speech enhancement and ambient noise gating.
+- **AutoEQ Database Integration**: Live parametric EQ curve fetching directly from the AutoEQ project for thousands of headphone models.
+- **FFT Overlap-Add Convolution Reverb**: High-resolution room acoustics and impulse response processing.
+- **Multiband Upward Compression (OTT-Style)**: Pulls up micro-dynamics and tightens soundstage punch without harsh clipping.
+- **EBU R128 / ITU-R BS.1770 LUFS Normalization**: Rolling perceived loudness calculation with smooth auto-gain riding.
+- **Linear-Phase FIR Equalizer**: Zero phase-smearing mastering equalizer.
+- **Virtual Audio Routing**: Real-time PipeWire loopback sink manager with non-blocking supervisor, de-clicked 15ms bypass crossfade, and 18Hz infrasonic DC rumble blocking filter.
+- **Zero-Latency Audio Mesh Sync**: Precision UDP multicast broadcaster and receiver for multi-device synchronized audio.
+
+---
+
+## 🎛️ 6. 10-Band ISO Precision Equalizer & Presets
 
 - Direct Form II Transposed Bi-quad IIR filters with click-free parameter interpolation.
 - **Factory Presets**:
@@ -65,13 +104,19 @@ Tested at 48,000 Hz stereo audio on a single CPU core:
 
 ---
 
-## 🚀 Quick Start & Controls
+## 🚀 Quick Start & CLI Flags
 
 ```bash
 # Launch interactive TUI
 sonic_aura
 
-# Instant audition demo (binaural music synthesizer)
+# Launch with Tinnitus Relief active at 6,500 Hz
+sonic_aura --tinnitus-mode notch --tinnitus-freq 6500 --tinnitus-ear both
+
+# Launch in Light Theme
+sonic_aura --theme light
+
+# Instant audition demo (binaural synthesizer)
 sonic_aura --demo
 
 # Specify earphone and environment directly from CLI:
@@ -80,19 +125,39 @@ sonic_aura --earphone iem --env remote
 sonic_aura --earphone airpods --env cafe
 ```
 
-### TUI Keyboard Shortcuts:
-- **`[Tab]`**: Switch focus between **Presets**, **10-Band EQ**, and **AI Boost Sliders**.
-- **`[P]`**: Cycle Presets (*Dolby Atmos*, *Bang & Olufsen*, *Apple Spatial*, *Laptop Fix*, *DTS:X Gaming*, etc.).
-- **`[E]`**: Cycle **Earphone Calibration Profiles** (*Budget Earbuds* ↔ *AirPods/TWS* ↔ *Bass-Heavy* ↔ *Audiophile IEM* ↔ *Open-Back Studio* ↔ *Closed-Back Studio*).
-- **`[N]`**: Cycle **Environmental Modes** (*🏙️ City Traffic* ↔ *✈️ Transit/Airplane* ↔ *☕ Cafe/Office* ↔ *🍃 Quiet Remote* ↔ *🌙 Late Night* ↔ *🏠 Standard*).
-- **`[← / → / ↑ / ↓]`**: Adjust EQ gains and AI enhancement parameters.
-- **`[Space]`**: Instant **A/B Bypass Toggle** to hear the immediate difference against raw audio.
-- **`[M]`**: Switch Output Mode (*🎧 Headphones 3D Atmos* ↔ *💻 Laptop Speakers* ↔ *🎛️ Studio Reference*).
-- **`[A]`**: Toggle AI Adaptive Dynamic Boost.
-- **`[S]`**: Save current EQ & tuning to `~/.config/sonic_aura/config.toml`.
-- **`[Q]`**: Exit.
+### CLI Options:
+| Flag | Description | Values / Defaults |
+|---|---|---|
+| `--theme` | Initial UI theme mode | `dark` (default), `light` |
+| `--tinnitus-mode` | Tinnitus therapy mode | `off` (default), `notch`, `masking`, `combined` |
+| `--tinnitus-freq` | Tinnitus center frequency in Hz | `500.0` – `18000.0` (default: `6000.0`) |
+| `--tinnitus-ear` | Target ear for tinnitus therapy | `both` (default), `left`, `right` |
+| `--earphone` | Earphone calibration profile | `budget`, `airpods`, `bass`, `iem`, `openback`, `closedback`, `neutral` |
+| `--env` | Environmental anti-masking mode | `city`, `transit`, `cafe`, `remote`, `night`, `studio` |
+| `--demo` | Run with built-in binaural synth | Self-contained audio testing |
+
+---
+
+## ⌨️ TUI Keyboard Shortcuts
+
+| Key | Action |
+|---|---|
+| **`[Tab]`** | Cycle panel focus: `Presets` ➔ `Equalizer` ➔ `AI Boost` ➔ `Tinnitus Studio` |
+| **`[X]`** | Quick jump / toggle focus directly to **Tinnitus Relief Studio** |
+| **`[L]`** | Toggle between **Dark** and **Light** themes |
+| **`[T]`** | In Tinnitus panel: toggle **Pitch-Matching Sine Tone** (`-30 dBFS`). Elsewhere: toggle Audio loopback/synth |
+| **`[P]`** | Cycle Presets (*Dolby Atmos*, *Bang & Olufsen*, *Apple Spatial*, *Laptop Fix*, *DTS:X*, etc.) |
+| **`[E]`** | Cycle **Earphone Profiles** (*Budget*, *AirPods*, *Bass*, *IEM*, *Open-Back*, *Closed-Back*, *Neutral*) |
+| **`[N]`** | Cycle **Environment Modes** (*City*, *Transit*, *Cafe*, *Remote*, *Night*, *Studio*) |
+| **`[Space]`** | Instant **A/B Bypass Toggle** (or toggle Sine Test Tone when inside Tinnitus Studio) |
+| **`[↑] / [↓]`** | Navigate between sliders or parameters in the focused panel |
+| **`[←] / [→]`** | Adjust value of the active parameter (sweep pitch, gain, notch $Q$, or volume) |
+| **`[0]`** | Reset focused parameter to default |
+| **`[S]`** | Save current EQ, theme, and tinnitus calibration to `~/.config/sonic_aura/config.toml` |
+| **`[Q]`** | Exit cleanly (restoring system audio sinks and routes) |
 
 ---
 
 ## 📄 License
 MIT License
+
